@@ -344,3 +344,58 @@ button:disabled {
     font-weight: 500;
 }
 
+/* Mobile/Android optimizations */
+@media (max-width: 768px) {
+    body {
+        padding: 10px;
+    }
+    
+    .container {
+        padding: 15px;
+    }
+    
+    h1 {
+        font-size: 1.5em;
+    }
+    
+    /* Disable contenteditable on mobile - tables are read-only */
+    .messages-table td[contenteditable="true"] {
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+        pointer-events: none;
+    }
+    
+    /* Make tables horizontally scrollable on mobile */
+    .messages-table-wrapper {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    .messages-table {
+        min-width: 800px;
+    }
+    
+    /* Larger touch targets */
+    button, .file-input-label {
+        min-height: 44px;
+        min-width: 44px;
+    }
+    
+    /* Better spacing for filters on mobile */
+    .date-filter > div {
+        flex-direction: column;
+        align-items: stretch !important;
+    }
+    
+    .date-filter > div > div {
+        width: 100%;
+        margin-bottom: 10px;
+    }
+    
+    input[type="date"], select {
+        width: 100%;
+    }
+}
+

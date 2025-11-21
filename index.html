@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
@@ -12,7 +12,8 @@
 </head>
 <body>
     <div class="container">
-        <h1>WhatsApp Chat Parser</h1>
+        <h1>WhatsApp Chat Parser for Work Logs</h1>
+        
         
         <form id="parseForm">
             <div class="form-group">
@@ -21,7 +22,7 @@
                 <input 
                     type="file" 
                     id="fileInput" 
-                    accept=".zip"
+                    accept=".zip,application/zip,application/x-zip-compressed"
                     required
                 >
                     <label for="fileInput" class="file-input-label">

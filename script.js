@@ -1,0 +1,2030 @@
+// ========== CONSTANTS ==========
+const BREAK_DURATION_PATTERNS = [
+    /\b(\d+\.\d+)\s*(?:hr|hrs|h)\b/i,
+    /\b(\d+\/\d+)\s*(?:hr|hrs|h)?\b/i,
+    /\b(\d+)\s*'/,
+    /\b(\d+)\s*(?:hr|hrs|h)(?!\w)/i,
+    /\b(\d+)\s*min\b/i,
+    /\b(\d+)\s*minute/i,
+    /\b(\d+)\s*minuten/i
+];
+
+const REGIE_DURATION_PATTERNS = [
+    /\b(\d+\/\d+)\s*(?:hr|hrs|h)?/i,
+    /\b(\d+\.\d+)\s*(?:hr|hrs|h)\b/i,
+    /\b(\d+)\s*(?:hr|hrs|h)\b/i,
+    /\b(\d+)\s*min\b/i
+];
+
+const BREAK_CONTEXT_KEYWORDS = /\b(break|lunch|pause|tea|rest|lunch\s*[+&]\s*tea)\b/i;
+const REGIE_KEYWORD = /\bregie\b/i;
+const REGIE_TYPE_KEYWORDS = /\b(regie|wood|clearing|bushes|branches|material\s+transport|cutting\s+trees?|cutting\s+bushes|cutting\s+branches|fallen\s+trees?|cut\s+trees?|cut\s+bushes|cut\s+branches|moving\s+branches?|chainsaw\s+cutting|wood\s+clearing|clearing\s+wood)\b/i;
+const TIME_RANGE_PATTERN = /(\d{1,2})\s*:\s*(\d{2})\s*-\s*(\d{1,2})\s*:\s*(\d{2})/;
+const TIME_PATTERN = /\b(\d{1,2})\s*:\s*(\d{2})\b/g;
+
+// Date patterns
+const DATE_PATTERN_DASH_SLASH = /:\s*(\d{2}\.\d{2}(?:\.\d{2,4})?\.?)\s*[-/]/;
+const DATE_PATTERN_WITH_TIME = /:\s*(\d{2}\.\d{2}(?:\.\d{2,4})?\.?)\s+(?=\d{1,2}\s*:\s*\d{2})/;
+const DATE_PATTERN_AFTER_COLON = /:\s*(\d{2}\.\d{2}(?:\.\d{2,4})?\.?)(?=\s|\n|$|[^\d])/;
+const DATE_PATTERN_START = /^(\d{2}\.\d{2}(?:\.\d{2,4})?\.?)(?=\s|\n|$|[^\d])/;
+const DATE_PATTERN_START_WS = /^\s+(\d{2}\.\d{2}(?:\.\d{2,4})?\.?)(?=\s|\n|$|[^\d])/;
+const DATE_PATTERN_GENERAL = /(?:^|\s|:)(\d{2}\.\d{2}(?:\.\d{2,4})?\.?)(?=\s|\n|$|[^\d])/m;
+const DATE_PATTERN_ALL = /(\d{2}\.\d{2}(?:\.\d{2,4})?\.?)(?=\s|$|[^\d])/g;
+
+// ========== HELPER FUNCTIONS ==========
+function formatDateToDDMMYYYY(dateStr) {
+    if (!dateStr) return '';
+    
+    // If already in dd.mm.yyyy format, return as is
+    if (/^\d{2}\.\d{2}\.\d{4}$/.test(dateStr)) {
+        return dateStr;
+    }
+    
+    // If in dd.mm or dd.mm. format, add current year
+    if (/^\d{2}\.\d{2}\.?$/.test(dateStr)) {
+        const year = new Date().getFullYear();
+        return dateStr.replace(/\.?$/, '') + '.' + year;
+    }
+    
+    // If in dd.mm.yy format, convert to yyyy
+    if (/^\d{2}\.\d{2}\.\d{2}$/.test(dateStr)) {
+        const parts = dateStr.split('.');
+        const year = parts[2].length === 2 ? '20' + parts[2] : parts[2];
+        return `${parts[0]}.${parts[1]}.${year}`;
+    }
+    
+    // If in yyyy-mm-dd format (from metadata), convert to dd.mm.yyyy
+    if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
+        const parts = dateStr.split('-');
+        return `${parts[2]}.${parts[1]}.${parts[0]}`;
+    }
+    
+    // Try to parse as date and format
+    try {
+        const date = new Date(dateStr);
+        if (!isNaN(date.getTime())) {
+            const day = String(date.getDate()).padStart(2, '0');
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const year = date.getFullYear();
+            return `${day}.${month}.${year}`;
+        }
+    } catch (e) {
+        // If parsing fails, return original
+    }
+    
+    return dateStr;
+}
+
+function minutesToHHMM(minutes) {
+    const hours = Math.floor(minutes / 60);
+    const mins = Math.round(minutes % 60);
+    return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+}
+
+function normalizeTime(timeStr) {
+    if (!timeStr || !timeStr.includes(':')) return timeStr;
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function parseTimeToMinutes(timeStr) {
+    if (!timeStr || !timeStr.includes(':')) return 0;
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    return hours * 60 + minutes;
+}
+
+function calculateNettoTime(startTime, endTime, breakTime, regieTime = '') {
+    try {
+        const startMinutes = parseTimeToMinutes(startTime);
+        const endMinutes = parseTimeToMinutes(endTime);
+        if (!startMinutes || !endMinutes) return '';
+
+        let totalMinutes = endMinutes - startMinutes;
+        if (totalMinutes < 0) {
+            totalMinutes += 24 * 60; // Overnight shift
+        } else if (totalMinutes === 0) {
+            console.warn('Invalid time range: start time equals end time', startTime, endTime);
+            return '';
+        }
+
+        const breakMinutes = parseTimeToMinutes(breakTime) || 0;
+        // Netto = (end - start) - break (no subtraction of regie-hrs)
+        const nettoMinutes = totalMinutes - breakMinutes;
+        return nettoMinutes > 0 ? minutesToHHMM(nettoMinutes) : '';
+    } catch (e) {
+        console.error('Error calculating netto time:', e);
+        return '';
+    }
+}
+
+// Validate date format dd.mm.yyyy
+function validateDateFormat(dateStr) {
+    if (!dateStr || dateStr.trim() === '') return true; // Empty is valid
+    const pattern = /^\d{2}\.\d{2}\.\d{4}$/;
+    return pattern.test(dateStr.trim());
+}
+
+// Validate time format HH:MM
+function validateTimeFormat(timeStr) {
+    if (!timeStr || timeStr.trim() === '') return true; // Empty is valid
+    const pattern = /^\d{2}:\d{2}$/;
+    if (!pattern.test(timeStr.trim())) return false;
+    
+    // Check valid hours (00-23) and minutes (00-59)
+    const [hours, minutes] = timeStr.trim().split(':').map(Number);
+    return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
+}
+
+// Check if regie-hrs <= netto
+function validateRegieVsNetto(regieTime, nettoTime) {
+    if (!regieTime || !nettoTime) return true; // Empty is valid
+    
+    const regieMinutes = parseTimeToMinutes(regieTime);
+    const nettoMinutes = parseTimeToMinutes(nettoTime);
+    
+    if (!regieMinutes || !nettoMinutes) return true; // Invalid times are handled elsewhere
+    
+    return regieMinutes <= nettoMinutes;
+}
+
+// Extract date matches from text using all date patterns
+function findDateMatches(text) {
+    const dateMatches = [];
+    
+    // Pattern 1: Date followed by dash or slash
+    const match1 = text.match(DATE_PATTERN_DASH_SLASH);
+    if (match1) {
+        dateMatches.push({
+            date: match1[1].replace(/\.$/, ''),
+            index: match1.index + match1[0].indexOf(match1[1])
+        });
+        return dateMatches;
+    }
+    
+    // Pattern 2: Date followed by space and time
+    const match2 = text.match(DATE_PATTERN_WITH_TIME);
+    if (match2) {
+        dateMatches.push({
+            date: match2[1].replace(/\.$/, ''),
+            index: match2.index + match2[0].indexOf(match2[1])
+        });
+        return dateMatches;
+    }
+    
+    // Pattern 3a: Date after colon
+    const match3a = text.match(DATE_PATTERN_AFTER_COLON);
+    if (match3a) {
+        dateMatches.push({
+            date: match3a[1].replace(/\.$/, ''),
+            index: match3a.index + match3a[0].indexOf(match3a[1])
+        });
+        return dateMatches;
+    }
+    
+    // Pattern 3b: Date at start
+    const match3bStart = text.match(DATE_PATTERN_START);
+    if (match3bStart) {
+        dateMatches.push({
+            date: match3bStart[1].replace(/\.$/, ''),
+            index: match3bStart.index
+        });
+        return dateMatches;
+    }
+    
+    // Pattern 3b: Date after whitespace at start
+    const match3bStartWS = text.match(DATE_PATTERN_START_WS);
+    if (match3bStartWS) {
+        dateMatches.push({
+            date: match3bStartWS[1].replace(/\.$/, ''),
+            index: match3bStartWS.index + (match3bStartWS[0].length - match3bStartWS[1].length)
+        });
+        return dateMatches;
+    }
+    
+    // Pattern 3b: Date after space or colon anywhere
+    const match3b = text.match(DATE_PATTERN_GENERAL);
+    if (match3b) {
+        const dateIndex = match3b.index + (match3b[0][0] === ' ' || match3b[0][0] === ':' ? 1 : 0);
+        dateMatches.push({
+            date: match3b[1].replace(/\.$/, ''),
+            index: dateIndex
+        });
+    }
+    
+    return dateMatches;
+}
+
+// Extract times from text
+function extractTimesFromText(text) {
+    const times = [];
+    const timeRangeMatch = text.match(TIME_RANGE_PATTERN);
+    if (timeRangeMatch) {
+        return {
+            startTime: normalizeTime(`${timeRangeMatch[1]}:${timeRangeMatch[2]}`),
+            endTime: normalizeTime(`${timeRangeMatch[3]}:${timeRangeMatch[4]}`),
+            timeRangeText: timeRangeMatch[0]
+        };
+    }
+    
+    // Extract individual times
+    TIME_PATTERN.lastIndex = 0;
+    let timeMatch;
+    while ((timeMatch = TIME_PATTERN.exec(text)) !== null) {
+        times.push(normalizeTime(`${timeMatch[1]}:${timeMatch[2]}`));
+    }
+    
+    if (times.length >= 2) {
+        return { startTime: times[0], endTime: times[1] };
+    } else if (times.length === 1) {
+        return { startTime: times[0] };
+    }
+    
+    return {};
+}
+
+// Extract break, regie, and calculate netto from text
+function extractTimeDetails(text, entry) {
+    if (!entry.startTime && !entry.endTime) return;
+    
+    // Extract break time
+    const breakData = extractBreakTime(text, entry.breakTime);
+    if (breakData.minutes > 0) {
+        entry.breakTime = minutesToHHMM(breakData.minutes);
+        if (breakData.originalText) {
+            entry.breakOriginalText = breakData.originalText;
+        }
+    }
+    
+    // Extract regie entries
+    const regieEntries = extractRegieEntries(text, entry.regieType);
+    const regieData = processRegieEntries(regieEntries, entry.regieType);
+    if (regieData.regieTime) {
+        entry.regieTime = regieData.regieTime;
+        entry.regieType = regieData.regieType;
+        entry.regieOriginalText = regieData.regieOriginalText;
+    }
+    
+    // Calculate netto time
+    if (entry.startTime && entry.endTime) {
+        entry.nettoTime = calculateNettoTime(
+            entry.startTime,
+            entry.endTime,
+            entry.breakTime,
+            '' // Netto doesn't subtract regie
+        );
+    }
+}
+
+function parseDurationValue(matchValue, patternSource) {
+    if (matchValue.includes('.')) {
+        return parseFloat(matchValue) * 60; // Decimal format: 0.75hrs
+    } else if (matchValue.includes('/')) {
+        const [num, den] = matchValue.split('/').map(Number);
+        return (num / den) * 60; // Fraction format: 1/2 h
+    } else {
+        const num = parseInt(matchValue);
+        if (patternSource.includes('hr') || patternSource.includes('h\\b')) {
+            return num * 60; // Hours
+        } else if (patternSource.includes("'")) {
+            return num; // Apostrophe format: minutes
+        } else {
+            return num; // Minutes
+        }
+    }
+}
+
+function extractBreakTime(text, existingBreakTime = '') {
+    // First try to extract from text (prioritize text over existing value)
+    for (const pattern of BREAK_DURATION_PATTERNS) {
+        const allMatches = [...text.matchAll(new RegExp(pattern.source, 'gi'))];
+        for (const breakMatch of allMatches) {
+            const breakIndex = breakMatch.index;
+            // Check up to 20 chars after the duration to catch "lunch+tea" or "lunch & tea"
+            const endIdx = Math.min(text.length, breakIndex + breakMatch[0].length + 20);
+            const context = text.substring(breakIndex + breakMatch[0].length, endIdx);
+
+            // Case 1: Has break context keyword (lunch, tea, break, etc.)
+            if (BREAK_CONTEXT_KEYWORDS.test(context)) {
+                return {
+                    minutes: parseDurationValue(breakMatch[1], pattern.source),
+                    originalText: breakMatch[0] // Store original pattern text for highlighting
+                };
+            }
+            
+            // Case 2: Duration appears right after a time range (within 20 chars before)
+            // Check if there's a time range pattern before this duration
+            const startCheck = Math.max(0, breakIndex - 20);
+            const textBeforeDuration = text.substring(startCheck, breakIndex);
+            // Look for time range pattern (e.g., "08:00-17:00" or "08:00 - 17:00")
+            const timeRangeBefore = /(\d{1,2})\s*:\s*(\d{2})\s*-\s*(\d{1,2})\s*:\s*(\d{2})/.test(textBeforeDuration);
+            if (timeRangeBefore) {
+                // Duration after time range - treat as break time even without keywords
+                return {
+                    minutes: parseDurationValue(breakMatch[1], pattern.source),
+                    originalText: breakMatch[0] // Store original pattern text for highlighting
+                };
+            }
+        }
+    }
+    
+    // If nothing found in text, parse existing breakTime to minutes
+    if (existingBreakTime) {
+        let minutes = 0;
+        if (existingBreakTime.includes(':')) {
+            minutes = parseTimeToMinutes(existingBreakTime);
+        } else if (existingBreakTime.includes('/')) {
+            const [num, den] = existingBreakTime.split('/').map(Number);
+            minutes = (num / den) * 60;
+        } else if (existingBreakTime.includes('hr') || existingBreakTime.includes('h')) {
+            minutes = parseFloat(existingBreakTime) * 60;
+        } else {
+            minutes = parseInt(existingBreakTime) || 0;
+        }
+        return {
+            minutes: minutes,
+            originalText: existingBreakTime // Use existing as original if no new match found
+        };
+    }
+    
+    return { minutes: 0, originalText: '' };
+}
+
+function extractRegieEntries(text, existingRegieType = '') {
+    const regieEntries = [];
+    const matchedRanges = []; // Track matched ranges to prevent overlapping matches
+    
+    for (const pattern of REGIE_DURATION_PATTERNS) {
+        const allMatches = [...text.matchAll(new RegExp(pattern.source, 'gi'))];
+        for (const regieMatch of allMatches) {
+            const regieIndex = regieMatch.index;
+            const regieEnd = regieIndex + regieMatch[0].length;
+            
+            // Check if this match overlaps with any previously matched range
+            const overlaps = matchedRanges.some(range => 
+                (regieIndex >= range.start && regieIndex < range.end) ||
+                (regieEnd > range.start && regieEnd <= range.end) ||
+                (regieIndex <= range.start && regieEnd >= range.end)
+            );
+            
+            if (overlaps) continue; // Skip overlapping matches
+            
+            const endIdx = Math.min(text.length, regieEnd + 15);
+            const context = text.substring(regieEnd, endIdx);
+
+            const regieMatchInContext = context.match(REGIE_KEYWORD);
+            if (regieMatchInContext) {
+                const regieMinutes = parseDurationValue(regieMatch[1], pattern.source);
+                const regieTime = minutesToHHMM(regieMinutes);
+
+                // Extract regie type from context
+                let regieType = existingRegieType || '';
+                if (!regieType) {
+                    // Find text after "regie" keyword
+                    const regieKeywordPos = regieMatchInContext.index + regieIndex + regieMatch[0].length;
+                    const afterRegie = text.substring(regieKeywordPos + 5); // +5 for "regie"
+                    
+                    // Search for regie type keywords AFTER "regie" keyword only (case insensitive)
+                    // Match phrases first (longer), then single words
+                    const keywordPhrases = [
+                        /\bmaterial\s+transport\b/gi,
+                        /\bcutting\s+trees?\b/gi,
+                        /\bcutting\s+bushes\b/gi,
+                        /\bcutting\s+branches\b/gi,
+                        /\bfallen\s+trees?\b/gi,
+                        /\bcut\s+trees?\b/gi,
+                        /\bcut\s+bushes\b/gi,
+                        /\bcut\s+branches\b/gi,
+                        /\bmoving\s+branches?\b/gi,
+                        /\bchainsaw\s+cutting\b/gi,
+                        /\bwood\s+clearing\b/gi,
+                        /\bclearing\s+wood\b/gi,
+                        /\bwood\b/gi,
+                        /\bclearing\b/gi,
+                        /\bbushes\b/gi,
+                        /\bbranches\b/gi
+                    ];
+                    
+                    const foundKeywords = [];
+                    for (const pattern of keywordPhrases) {
+                        const matches = [...afterRegie.matchAll(pattern)];
+                        for (const match of matches) {
+                            const keyword = match[0].toLowerCase().replace(/\s+/g, ' ').trim();
+                            if (!foundKeywords.includes(keyword)) {
+                                foundKeywords.push(keyword);
+                            }
+                        }
+                    }
+                    
+                    if (foundKeywords.length > 0) {
+                        regieType = foundKeywords.join(', ');
+                    }
+                }
+
+                regieEntries.push({
+                    time: regieTime,
+                    type: regieType,
+                    minutes: regieMinutes,
+                    originalText: regieMatch[0]
+                });
+                
+                // Mark this range as matched
+                matchedRanges.push({ start: regieIndex, end: regieEnd });
+            }
+        }
+    }
+    return regieEntries;
+}
+
+function processRegieEntries(regieEntries, existingRegieType = '') {
+    if (regieEntries.length === 0) return { regieTime: '', regieType: '', regieOriginalText: '' };
+
+    if (regieEntries.length === 1) {
+        return {
+            regieTime: regieEntries[0].time,
+            regieType: regieEntries[0].type || existingRegieType || '',
+            regieOriginalText: regieEntries[0].originalText
+        };
+    } else {
+        // Sum all regie times
+        const totalRegieMinutes = regieEntries.reduce((sum, e) => sum + e.minutes, 0);
+        const types = regieEntries.filter(e => e.type).map(e => e.type);
+        return {
+            regieTime: minutesToHHMM(totalRegieMinutes),
+            regieType: types.length > 0 ? types.join(', ') : existingRegieType || '',
+            regieOriginalText: regieEntries.map(e => e.originalText).join('|')
+        };
+    }
+}
+
+function createEmptyEntry() {
+    return {
+        workDate: '',
+        startTime: '',
+        endTime: '',
+        timeRangeOriginalText: '', // Store original time range text (e.g., "13:30-16:00") for highlighting
+        breakTime: '',
+        breakOriginalText: '', // Store original pattern text for highlighting
+        nettoTime: '',
+        regieTime: '',
+        regieType: '',
+        regieOriginalText: ''
+    };
+}
+
+// Parse message header and create date object
+function parseMessageHeader(dateStr, timeStr) {
+    const [day, month, yearStr] = dateStr.split('.');
+    const year = yearStr.length === 2 ? '20' + yearStr : yearStr;
+    const fullTime = timeStr + ':00';
+    const date = new Date(`${year}-${month}-${day}T${fullTime}`);
+    return isNaN(date.getTime()) ? null : date;
+}
+
+// Process a single message and extract work info
+function processMessage(message, dateStr, timeStr, sender, log) {
+    const date = parseMessageHeader(dateStr, timeStr);
+    if (!date) {
+        log(`  ✗ Invalid date: ${dateStr}`);
+        return null;
+    }
+    
+    log(`  Message preview: "${message.substring(0, 100).replace(/\n/g, '\\n')}..."`);
+    const workEntries = extractWorkInfo(message, log);
+    const workInfo = workEntries.length > 0 ? workEntries[0] : createEmptyEntry();
+    
+    const hasData = workInfo.workDate || workInfo.startTime || workInfo.endTime || 
+                   workInfo.breakTime || workInfo.regieTime || workInfo.regieType;
+    if (hasData) {
+        log(`  ✓ Extracted: date=${workInfo.workDate || 'none'}, time=${workInfo.startTime || 'none'}-${workInfo.endTime || 'none'}, break=${workInfo.breakTime || 'none'}, regie=${workInfo.regieTime || 'none'}`);
+    } else {
+        log(`  ⚠ No fields extracted from message`);
+        log(`  Message content: "${message.substring(0, 200).replace(/\n/g, '\\n')}..."`);
+    }
+    
+    return createMessageEntry(dateStr, timeStr, sender, message, workInfo, date);
+}
+
+function createMessageEntry(dateStr, timeStr, sender, message, workInfo, date) {
+    return {
+        timestamp: date.toISOString(),
+        date: dateStr,
+        time: timeStr,
+        sender: sender.trim(),
+        message: message.trim(),
+        workDate: workInfo.workDate || dateStr,
+        startTime: workInfo.startTime,
+        endTime: workInfo.endTime,
+        timeRangeOriginalText: workInfo.timeRangeOriginalText || '',
+        breakTime: workInfo.breakTime,
+        breakOriginalText: workInfo.breakOriginalText || '',
+        nettoTime: workInfo.nettoTime,
+        regieTime: workInfo.regieTime,
+        regieType: workInfo.regieType || '',
+        regieOriginalText: workInfo.regieOriginalText || '',
+        additionalDates: workInfo.additionalDates || [],
+        structuredFormatMatch: workInfo.structuredFormatMatch || null
+    };
+}
+
+function updateWorkInfoFromEntry(target, source) {
+    if (source.workDate && !target.workDate) target.workDate = source.workDate;
+    if (source.startTime && !target.startTime) target.startTime = source.startTime;
+    if (source.endTime && !target.endTime) target.endTime = source.endTime;
+    if (source.timeRangeOriginalText && !target.timeRangeOriginalText) {
+        target.timeRangeOriginalText = source.timeRangeOriginalText;
+    }
+    if (source.breakTime && !target.breakTime) {
+        target.breakTime = source.breakTime;
+        target.breakOriginalText = source.breakOriginalText || '';
+    }
+    if (source.nettoTime && !target.nettoTime) target.nettoTime = source.nettoTime;
+    if (source.regieTime && !target.regieTime) {
+        target.regieTime = source.regieTime;
+        target.regieOriginalText = source.regieOriginalText || '';
+    }
+    if (source.regieType && !target.regieType) target.regieType = source.regieType;
+}
+
+// Extract ZIP file
+async function extractZip(input) {
+    if (typeof JSZip === 'undefined') {
+        throw new Error('JSZip library not loaded. Please check your internet connection.');
+    }
+    
+    try {
+        // Convert input to appropriate format if needed
+        let zipInput = input;
+        if (input instanceof ArrayBuffer) {
+            // JSZip can handle ArrayBuffer directly
+            zipInput = input;
+        } else if (input instanceof Blob) {
+            // Convert Blob to ArrayBuffer for better compatibility
+            zipInput = await input.arrayBuffer();
+        }
+        
+        // Load ZIP file
+        const zip = await JSZip.loadAsync(zipInput);
+        
+        // Validate zip object
+        if (!zip) {
+            throw new Error('Failed to load ZIP file - zip object is null');
+        }
+        
+        if (!zip.files || typeof zip.files !== 'object') {
+            throw new Error('Invalid ZIP file structure - files property not found');
+        }
+        
+        const fileContents = {};
+        
+        // Safely iterate through zip.files
+        const fileKeys = Object.keys(zip.files);
+        if (fileKeys.length === 0) {
+            throw new Error('ZIP file is empty');
+        }
+        
+        fileKeys.forEach(relativePath => {
+            const file = zip.files[relativePath];
+            // Check if it's a file (not a directory) and has the right extension
+            if (file && !file.dir && (relativePath.endsWith('.txt') || relativePath.endsWith('.html') || relativePath.endsWith('.json'))) {
+                fileContents[relativePath] = file;
+            }
+        });
+        
+        if (Object.keys(fileContents).length === 0) {
+            throw new Error('No chat export files (.txt, .html, .json) found in ZIP archive');
+        }
+        
+        // Read all file contents asynchronously
+        const contents = {};
+        const promises = [];
+        
+        for (const [filename, file] of Object.entries(fileContents)) {
+            promises.push(
+                file.async('text').then(text => {
+                    contents[filename] = text;
+                }).catch(err => {
+                    console.error(`Error reading ${filename}:`, err);
+                })
+            );
+        }
+        
+        await Promise.all(promises);
+        return contents;
+    } catch (error) {
+        console.error('ZIP extraction error:', error);
+        throw new Error('Failed to extract ZIP file: ' + error.message);
+    }
+}
+
+// Highlight matched portions in message text - DO NOT ALTER TEXT, only wrap in spans
+function highlightMessage(message, workEntries) {
+    if (!workEntries || workEntries.length === 0) return message;
+    
+    // Check if we have any actual extracted data
+    const hasData = workEntries.some(entry => 
+        entry.workDate?.trim() || entry.startTime?.trim() || entry.endTime?.trim() ||
+        entry.breakTime?.trim() || entry.regieTime?.trim() || entry.regieType?.trim()
+    );
+    if (!hasData) return message;
+    
+    const highlightRanges = [];
+    
+    // Find all date matches in message
+    const dateMatches = [];
+    DATE_PATTERN_ALL.lastIndex = 0;
+    let allDateMatch;
+    while ((allDateMatch = DATE_PATTERN_ALL.exec(message)) !== null) {
+        const dateStr = allDateMatch[1].replace(/\.$/, '');
+        const dateIndex = allDateMatch.index;
+        // Avoid duplicates (same position)
+        const alreadyFound = dateMatches.some(dm => Math.abs(dm.index - dateIndex) < 3);
+        if (!alreadyFound) {
+            dateMatches.push({
+                date: dateStr,
+                index: dateIndex,
+                fullMatch: allDateMatch[0]
+            });
+        }
+    }
+    dateMatches.sort((a, b) => a.index - b.index);
+    
+    // If we have multiple dates, mark second and subsequent dates as warnings
+    if (dateMatches.length > 1) {
+        // Get the first extracted date from work entry
+        const firstExtractedDate = workEntries[0]?.workDate;
+        
+        // Find which date match corresponds to the first extracted date
+        let firstDateMatchIndex = 0;
+        if (firstExtractedDate) {
+            const foundIndex = dateMatches.findIndex(dm => dm.date === firstExtractedDate);
+            if (foundIndex >= 0) {
+                firstDateMatchIndex = foundIndex;
+            }
+        }
+        
+        // Mark all dates after the first one as warnings (red highlight)
+        for (let i = firstDateMatchIndex + 1; i < dateMatches.length; i++) {
+            const dm = dateMatches[i];
+            highlightRanges.push({
+                start: dm.index,
+                end: dm.index + dm.fullMatch.length,
+                text: dm.fullMatch,
+                warning: true
+            });
+        }
+    }
+    const addMatches = (text, pattern) => {
+        if (!text?.trim()) return;
+        const regex = new RegExp(pattern, 'gi');
+        let match;
+        while ((match = regex.exec(message)) !== null) {
+            highlightRanges.push({ start: match.index, end: match.index + match[0].length, text: match[0] });
+        }
+    };
+    
+    workEntries.forEach(entry => {
+        // If structured format was matched, highlight the entire structured pattern first
+        if (entry.structuredFormatMatch) {
+            const sf = entry.structuredFormatMatch;
+            highlightRanges.push({
+                start: sf.index,
+                end: sf.index + sf.fullText.length,
+                text: sf.fullText
+            });
+        }
+        
+        if (entry.workDate?.trim()) {
+            addMatches(entry.workDate, `\\b${entry.workDate.replace(/\./g, '\\.')}\\b`);
+        }
+        // If we have a time range original text, highlight only that (to avoid matching other occurrences)
+        if (entry.timeRangeOriginalText?.trim()) {
+            const escapedRange = entry.timeRangeOriginalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            addMatches(entry.timeRangeOriginalText, escapedRange);
+        } else {
+            // Fallback: highlight individual times (but this might match multiple occurrences)
+            if (entry.startTime?.trim()) {
+                const escapedTime = entry.startTime.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                addMatches(entry.startTime, escapedTime);
+            }
+            if (entry.endTime?.trim()) {
+                const escapedTime = entry.endTime.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                addMatches(entry.endTime, escapedTime);
+            }
+        }
+        if (entry.breakTime?.trim()) {
+            // Use original text pattern if available (e.g., "1h", "45'", "1/2 hr")
+            if (entry.breakOriginalText?.trim()) {
+                const escapedText = entry.breakOriginalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                // Make whitespace flexible for matching
+                addMatches(entry.breakOriginalText, escapedText.replace(/\s+/g, '\\s+'));
+            } else {
+                // Fallback: try to match formatted time (less reliable)
+                const breakMatch = entry.breakTime.match(/(\d+(?:\/\d+)?(?:\.\d+)?)\s*(?:hr|hrs|h|min|'|minute|minuten)?/i);
+                if (breakMatch) {
+                    addMatches(breakMatch[0], `\\b${breakMatch[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+                }
+            }
+        }
+        if (entry.regieTime?.trim()) {
+            if (entry.regieOriginalText?.trim()) {
+                entry.regieOriginalText.split('|').forEach(originalText => {
+                    addMatches(originalText, originalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'));
+                });
+            } else {
+                addMatches(entry.regieTime, `\\b${entry.regieTime.replace(':', '\\:')}\\b`);
+            }
+        }
+        if (entry.regieType?.trim()) {
+            addMatches(entry.regieType, `\\b${entry.regieType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+        }
+        
+        // Check if regie time is empty but regie type keywords are found - mark in light red
+        if (!entry.regieTime?.trim() && !entry.regieType?.trim()) {
+            const regieTypeKeywordsGlobal = new RegExp(REGIE_TYPE_KEYWORDS.source, 'gi');
+            const regieKeywordMatches = [...message.matchAll(regieTypeKeywordsGlobal)];
+            for (const regieMatch of regieKeywordMatches) {
+                // Check if this keyword is not already part of a highlighted range
+                const alreadyHighlighted = highlightRanges.some(r => 
+                    regieMatch.index >= r.start && regieMatch.index < r.end
+                );
+                if (!alreadyHighlighted) {
+                    highlightRanges.push({ 
+                        start: regieMatch.index, 
+                        end: regieMatch.index + regieMatch[0].length, 
+                        text: regieMatch[0],
+                        warning: true // Mark as warning highlight
+                    });
+                }
+            }
+        }
+        
+        // Check 2: Highlight additional dates found after first extracted date
+        if (entry.additionalDates && entry.additionalDates.length > 0) {
+            entry.additionalDates.forEach(additionalDate => {
+                highlightRanges.push({
+                    start: additionalDate.index,
+                    end: additionalDate.index + additionalDate.fullMatch.length,
+                    text: additionalDate.fullMatch,
+                    warning: true
+                });
+            });
+        }
+    });
+    
+    // Sort ranges by start position (descending) to apply from end to start
+    highlightRanges.sort((a, b) => b.start - a.start);
+    
+    // Remove overlapping ranges (prioritize warnings)
+    // Sort by warning first (warnings last so they override), then by start position
+    highlightRanges.sort((a, b) => {
+        if (a.warning !== b.warning) return a.warning ? 1 : -1;
+        return a.start - b.start;
+    });
+    
+    const nonOverlapping = [];
+    for (const range of highlightRanges) {
+        const overlaps = nonOverlapping.some(r => 
+            (range.start >= r.start && range.start < r.end) ||
+            (range.end > r.start && range.end <= r.end) ||
+            (range.start <= r.start && range.end >= r.end)
+        );
+        if (!overlaps) nonOverlapping.push(range);
+    }
+    
+    // Re-sort by start position (descending) for applying highlights
+    nonOverlapping.sort((a, b) => b.start - a.start);
+    
+    // Apply highlights from end to start to preserve indices
+    let highlighted = message;
+    for (const range of nonOverlapping) {
+        const className = range.warning ? 'message-highlight-warning' : 'message-highlight';
+        highlighted = highlighted.substring(0, range.start) +
+            `<span class="${className}">` + range.text + '</span>' +
+            highlighted.substring(range.end);
+    }
+    
+    return highlighted;
+}
+
+// Extract work information from message body - returns first entry found
+function extractWorkInfo(message, logCallback = null) {
+    let entry = createEmptyEntry();
+    const log = (msg) => {
+        if (logCallback) logCallback(msg);
+    };
+    
+    // FIRST: Try structured format: "18.11., 08:00, 14:00, break: 30, regie: 90, regie-type: wood, Work Description"
+    // Format: dd.mm., H:MM or HH:MM, H:MM or HH:MM, break: MM, regie: MM (or regie-hrs: MM), regie-type: text, description
+    // Whitespace-insensitive: matches with any amount/type of whitespace or none
+    const structuredPattern = /(\d{2}\.\d{2}\.)\s*,\s*(\d{1,2}:\d{2})\s*,\s*(\d{1,2}:\d{2})(?:\s*,\s*break\s*:\s*(\d+))?(?:\s*,\s*regie(?:\s*-\s*hrs)?\s*:\s*(\d+))?(?:\s*,\s*regie\s*-\s*type\s*:\s*([^,]+))?(?:\s*,\s*(.+))?/i;
+    const structuredMatch = message.match(structuredPattern);
+    
+    if (structuredMatch) {
+        log(`  extractWorkInfo: Structured format matched!`);
+        log(`    Groups: date=${structuredMatch[1]}, start=${structuredMatch[2]}, end=${structuredMatch[3]}, break=${structuredMatch[4]}, regie=${structuredMatch[5]}, regie-type=${structuredMatch[6]}`);
+        
+        // Store the full structured match for highlighting
+        const fullMatch = structuredMatch[0];
+        const matchStartIndex = structuredMatch.index;
+        
+        // Fill entry with structured format data
+        entry.workDate = structuredMatch[1].replace(/\.$/, ''); // Remove trailing dot
+        const rawStart = structuredMatch[2];
+        const rawEnd = structuredMatch[3];
+        entry.startTime = normalizeTime(rawStart); // Normalize to HH:MM
+        entry.endTime = normalizeTime(rawEnd); // Normalize to HH:MM
+        log(`    Raw times: start="${rawStart}", end="${rawEnd}"`);
+        log(`    Normalized times: start="${entry.startTime}", end="${entry.endTime}"`);
+        
+        // Store original time range text for highlighting - extract from the actual matched text
+        // The structured format has times separated by comma: "12:00, 17:00"
+        const timeRangeInMatch = fullMatch.match(/(\d{1,2}:\d{2})\s*,\s*(\d{1,2}:\d{2})/);
+        if (timeRangeInMatch) {
+            entry.timeRangeOriginalText = timeRangeInMatch[0]; // e.g., "12:00, 17:00"
+        } else {
+            // Fallback: construct with dash if comma pattern not found
+            entry.timeRangeOriginalText = `${rawStart}-${rawEnd}`;
+        }
+        
+        if (structuredMatch[4]) {
+            entry.breakTime = minutesToHHMM(parseInt(structuredMatch[4]));
+            // Extract actual "break: 60" text from fullMatch
+            const breakMatch = fullMatch.match(/break\s*:\s*\d+/i);
+            if (breakMatch) {
+                entry.breakOriginalText = breakMatch[0];
+            }
+            log(`    Extracted break: ${entry.breakTime}`);
+        }
+        if (structuredMatch[5]) {
+            entry.regieTime = minutesToHHMM(parseInt(structuredMatch[5]));
+            // Extract actual "regie: 30" or "regie-hrs: 30" text from fullMatch
+            const regieMatch = fullMatch.match(/regie(?:\s*-\s*hrs)?\s*:\s*\d+/i);
+            if (regieMatch) {
+                entry.regieOriginalText = regieMatch[0];
+            }
+            log(`    Extracted regie: ${entry.regieTime}`);
+        }
+        if (structuredMatch[6]) {
+            entry.regieType = structuredMatch[6].trim();
+            log(`    Extracted regie-type: ${entry.regieType}`);
+        }
+        
+        entry.nettoTime = calculateNettoTime(entry.startTime, entry.endTime, entry.breakTime, ''); // Netto doesn't subtract regie
+        log(`    Calculated netto: ${entry.nettoTime}`);
+        
+        // Store structured format match info for highlighting the entire pattern
+        entry.structuredFormatMatch = {
+            fullText: fullMatch,
+            index: matchStartIndex
+        };
+        
+        // Structured format matched - return early, no need for fallback
+        return [entry];
+    } else {
+        log(`  extractWorkInfo: Structured format NOT matched`);
+    }
+    
+    // FALLBACK: Extract from message body if structured format didn't provide all fields
+    const dateMatches = findDateMatches(message);
+    
+    log(`  extractWorkInfo: Found ${dateMatches.length} date matches`);
+    if (dateMatches.length > 0) {
+        const dateInfo = dateMatches[0];
+        log(`  extractWorkInfo: First date="${dateInfo.date}" at index=${dateInfo.index}`);
+        
+        const cleanEntryText = message.substring(dateInfo.index);
+        log(`  extractWorkInfo: Text from date onwards="${cleanEntryText.substring(0, 100).replace(/\n/g, '\\n')}..."`);
+        
+        // Find additional dates after first date
+        const firstDateEndIndex = dateInfo.index + dateInfo.date.length;
+        const remainingText = message.substring(firstDateEndIndex);
+        DATE_PATTERN_ALL.lastIndex = 0;
+        const additionalDates = [];
+        let additionalMatch;
+        while ((additionalMatch = DATE_PATTERN_ALL.exec(remainingText)) !== null) {
+            const additionalDateStr = additionalMatch[1].replace(/\.$/, '');
+            if (additionalDateStr !== dateInfo.date) {
+                additionalDates.push({
+                    date: additionalDateStr,
+                    index: firstDateEndIndex + additionalMatch.index,
+                    fullMatch: additionalMatch[0]
+                });
+            }
+        }
+        if (additionalDates.length > 0) {
+            entry.additionalDates = additionalDates;
+        }
+        
+        // Fill empty fields only
+        if (!entry.workDate) {
+            entry.workDate = dateInfo.date;
+        }
+        
+        // Extract times if not already set
+        if (!entry.startTime || !entry.endTime) {
+            const timeData = extractTimesFromText(cleanEntryText);
+            if (timeData.startTime && !entry.startTime) entry.startTime = timeData.startTime;
+            if (timeData.endTime && !entry.endTime) entry.endTime = timeData.endTime;
+            if (timeData.timeRangeText) entry.timeRangeOriginalText = timeData.timeRangeText;
+        }
+        
+        // Extract break, regie, and calculate netto
+        extractTimeDetails(cleanEntryText, entry);
+    } else if (!entry.startTime && !entry.endTime && !entry.workDate) {
+        // No date found, try extracting times from whole message
+        const timeData = extractTimesFromText(message);
+        if (timeData.startTime) entry.startTime = timeData.startTime;
+        if (timeData.endTime) entry.endTime = timeData.endTime;
+        if (timeData.timeRangeText) entry.timeRangeOriginalText = timeData.timeRangeText;
+        
+        extractTimeDetails(message, entry);
+    }
+    
+    return [entry];
+}
+
+// Parse text format
+function parseTxtChat(content, logCallback = null) {
+    const messages = [];
+    let statusMessagesSkipped = 0;
+    
+    const log = (msg) => {
+        if (logCallback) logCallback(msg);
+        console.log(msg);
+    };
+    
+    log('Starting to parse chat content...');
+    
+    // First, find all potential message headers (just the date/time part)
+    // This finds ALL lines that start with a date pattern, regardless of what follows
+    // Use multiline flag (m) so ^ matches start of each line, not just start of string
+    const allHeadersPattern = /^(\d{2}\.\d{2}\.\d{2,4}),\s*(\d{2}:\d{2})\s*-\s*/gm;
+    
+    const allHeaders = [];
+    let headerMatch;
+    // Reset regex lastIndex to ensure we start from beginning
+    allHeadersPattern.lastIndex = 0;
+    while ((headerMatch = allHeadersPattern.exec(content)) !== null) {
+        allHeaders.push({
+            index: headerMatch.index,
+            dateStr: headerMatch[1],
+            timeStr: headerMatch[2],
+            fullMatch: headerMatch[0]
+        });
+    }
+    
+    log(`Found ${allHeaders.length} potential message headers (all lines starting with date pattern)`);
+    log(`  This includes both status messages (no colon) and regular messages (with colon)`);
+    
+    // First, explicitly filter out status messages (no colon after dash)
+    // Status messages: "dd.mm.yy, hh:mm - Text" (NO colon after dash)
+    // Regular messages: "dd.mm.yy, hh:mm - Name: Text" (HAS colon after sender name)
+    const regularMessageHeaders = [];
+    for (let i = 0; i < allHeaders.length; i++) {
+        const header = allHeaders[i];
+        const nextHeaderIndex = i < allHeaders.length - 1 ? allHeaders[i + 1].index : content.length;
+        const messageStart = header.index;
+        const messageText = content.substring(messageStart, Math.min(messageStart + 500, nextHeaderIndex));
+        
+        // Find the dash after time
+        const dashIndex = messageText.indexOf(' - ');
+        if (dashIndex >= 0) {
+            const afterDash = messageText.substring(dashIndex + 3);
+            const firstLineEnd = afterDash.indexOf('\n');
+            const firstLine = firstLineEnd > 0 ? afterDash.substring(0, firstLineEnd) : afterDash.substring(0, 200);
+            
+            // Check if there's a colon in the first line after the dash
+            // If yes, it's a regular message. If no, it's a status message.
+            if (firstLine.includes(':')) {
+                regularMessageHeaders.push(header);
+            } else {
+                statusMessagesSkipped++;
+                log(`Skipping status message (no colon after dash): ${header.dateStr}, ${header.timeStr} - "${firstLine.substring(0, 50)}..."`);
+            }
+        }
+    }
+    
+    log(`Filtered: ${regularMessageHeaders.length} regular messages, ${statusMessagesSkipped} status messages skipped`);
+    
+    // Log the regular message headers we found
+    if (regularMessageHeaders.length > 0) {
+        log(`Regular message headers found:`);
+        regularMessageHeaders.forEach((h, idx) => {
+            const preview = content.substring(h.index, Math.min(h.index + 80, content.length));
+            log(`  ${idx + 1}. ${h.dateStr}, ${h.timeStr} at index ${h.index}: "${preview.replace(/\n/g, '\\n')}..."`);
+        });
+    }
+    
+    // Iterate through regular message headers and extract messages directly
+    // No need for lookahead - we already know the boundaries!
+    log(`Processing ${regularMessageHeaders.length} regular messages...`);
+    const matchedIndices = new Set(); // Track which headers were processed
+    const headerPattern = /^(\d{2}\.\d{2}\.\d{2,4}),\s*(\d{2}:\d{2})\s*-\s*([^:\n]+):\s*(.*)/s;
+    
+    for (let i = 0; i < regularMessageHeaders.length; i++) {
+        const header = regularMessageHeaders[i];
+        const nextHeaderIndex = i < regularMessageHeaders.length - 1 
+            ? regularMessageHeaders[i + 1].index 
+            : content.length;
+        
+        // Extract the full message block from this header to the next
+        const messageBlock = content.substring(header.index, nextHeaderIndex);
+        
+        // Parse the header part: "dd.mm.yy, hh:mm - Name: Message"
+        const headerMatch = messageBlock.match(headerPattern);
+        
+        if (!headerMatch) {
+            log(`  ⚠ Could not parse header at index ${header.index}`);
+            continue;
+        }
+        
+        matchedIndices.add(header.index);
+        const [, dateStr, timeStr, sender, message] = headerMatch;
+        log(`  Processing message #${i + 1} at index ${header.index}: ${dateStr}, ${timeStr} - ${sender}: "${message.substring(0, 60).replace(/\n/g, '\\n')}..."`);
+        
+        try {
+            const messageEntry = processMessage(message, dateStr, timeStr, sender, log);
+            if (messageEntry) {
+                messages.push(messageEntry);
+            }
+        } catch (e) {
+            log(`  ✗ Error parsing message: ${e.message}`);
+            console.error('Error parsing message:', e, header);
+            continue;
+        }
+    }
+    
+    log(`Processed ${messages.length} messages from ${regularMessageHeaders.length} headers`);
+    
+    // Check if any headers failed to parse (shouldn't happen, but log for debugging)
+    if (matchedIndices.size < regularMessageHeaders.length) {
+        const unmatchedCount = regularMessageHeaders.length - matchedIndices.size;
+        log(`  ⚠ WARNING: ${unmatchedCount} headers could not be parsed (header pattern failed to match)`);
+    }
+    
+    // If primary pattern didn't work, try line-by-line parsing
+    if (messages.length === 0) {
+        log('Primary pattern found no messages, trying line-by-line parsing...');
+        const lines = content.split('\n');
+        let currentMessage = null;
+        
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            
+            // Try the exact format: dd.mm.yy, hh:mm - Name: Message or dd.mm.yyyy, hh:mm - Name: Message
+            // IMPORTANT: Must have colon after sender name (filters out WhatsApp status messages)
+            let msgMatch = line.match(/^(\d{2}\.\d{2}\.\d{2,4}),\s*(\d{2}:\d{2})\s*-\s*([^:]+):\s*(.+)$/);
+            
+            if (msgMatch) {
+                // Double-check: Skip if this is a status message (no colon in the line after the dash)
+                // Status messages have format: "dd.mm.yy, hh:mm - Message" (no colon)
+                // Regular messages have format: "dd.mm.yy, hh:mm - Name: Message" (has colon)
+                const lineAfterDash = line.substring(line.indexOf(' - ') + 3);
+                if (!lineAfterDash.includes(':')) {
+                    // This is a status message, skip it
+                    log(`Skipping status message in line-by-line parsing: ${line.substring(0, 50)}...`);
+                    continue;
+                }
+                
+                // Save previous message if exists
+                if (currentMessage) {
+                    messages.push(currentMessage);
+                }
+                // Start new message
+                const [, dateStr, timeStr, sender, message] = msgMatch;
+                try {
+                    const [day, month, yearStr] = dateStr.split('.');
+                    const year = yearStr.length === 2 ? '20' + yearStr : yearStr;
+                    const fullTime = timeStr + ':00';
+                    const date = new Date(`${year}-${month}-${day}T${fullTime}`);
+                    
+                    if (!isNaN(date.getTime())) {
+                        // Extract work information from message (use first entry only)
+                        const workEntries = extractWorkInfo(message.trim());
+                        const workInfo = workEntries.length > 0 ? workEntries[0] : createEmptyEntry();
+                        currentMessage = createMessageEntry(dateStr, timeStr, sender, message, workInfo, date);
+                    } else {
+                        currentMessage = null;
+                    }
+                } catch (e) {
+                    currentMessage = null;
+                }
+            } else if (currentMessage && line.trim() && !line.match(/^\d{2}\.\d{2}\.\d{2,4},/)) {
+                // Continuation of previous message (not a new date line)
+                currentMessage.message += '\n' + line.trim();
+                // Re-extract work info from full message (in case regie/break info is in continuation lines)
+                const fullWorkEntries = extractWorkInfo(currentMessage.message);
+                if (fullWorkEntries.length > 0) {
+                    updateWorkInfoFromEntry(currentMessage, fullWorkEntries[0]);
+                }
+            }
+        }
+        
+        // Add last message
+        if (currentMessage) {
+            // Final extraction from full message to catch any missed info
+            const finalWorkEntries = extractWorkInfo(currentMessage.message);
+            if (finalWorkEntries.length > 0) {
+                updateWorkInfoFromEntry(currentMessage, finalWorkEntries[0]);
+            }
+            messages.push(currentMessage);
+        }
+        
+        log(`Line-by-line parsing found ${messages.length} messages`);
+    }
+    
+    const nonStatusMessages = messages.length;
+    
+    log(`\n=== Parsing Summary ===`);
+    log(`Total headers found: ${allHeaders.length} (all lines starting with date pattern)`);
+    log(`  → Status messages (no colon): ${statusMessagesSkipped}`);
+    log(`  → Non-status messages (with colon): ${nonStatusMessages}`);
+    log(`  → Check: ${statusMessagesSkipped} + ${nonStatusMessages} = ${statusMessagesSkipped + nonStatusMessages} (should match ${allHeaders.length})`);
+    
+    return messages;
+}
+
+// Parse HTML format
+function parseHtmlChat(content) {
+    const messages = [];
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(content, 'text/html');
+    
+    // Try different HTML structures
+    const messageDivs = doc.querySelectorAll('.message, [class*="message"]');
+    
+    messageDivs.forEach(div => {
+        const dateEl = div.querySelector('.date, [class*="date"]');
+        const senderEl = div.querySelector('.author, [class*="author"], [class*="sender"]');
+        const textEl = div.querySelector('.text, [class*="text"], [class*="message"]');
+        
+        if (dateEl && textEl) {
+            messages.push({
+                timestamp: dateEl.textContent.trim(),
+                sender: senderEl ? senderEl.textContent.trim() : 'Unknown',
+                message: textEl.textContent.trim()
+            });
+        }
+    });
+    
+    return messages;
+}
+
+// Parse JSON format
+function parseJsonChat(content) {
+    const messages = [];
+    const data = JSON.parse(content);
+    
+    let messagesData = [];
+    if (Array.isArray(data)) {
+        messagesData = data;
+    } else if (data.messages) {
+        messagesData = data.messages;
+    } else if (data.chat && data.chat.messages) {
+        messagesData = data.chat.messages;
+    }
+    
+    messagesData.forEach(msg => {
+        if (typeof msg === 'object') {
+            messages.push({
+                timestamp: msg.timestamp || msg.date || '',
+                sender: msg.sender || msg.from || 'Unknown',
+                message: msg.message || msg.text || ''
+            });
+        }
+    });
+    
+    return messages;
+}
+
+// Analyze messages
+function analyzeMessages(messages) {
+    if (!messages || !messages.length) {
+        return {
+            total_messages: 0,
+            senders: {},
+            date_range: null,
+            messages_per_day: {}
+        };
+    }
+    
+    const stats = {
+        total_messages: messages.length,
+        senders: {},
+        date_range: null,
+        messages_per_day: {}
+    };
+    
+    const dates = [];
+    messages.forEach(msg => {
+        const sender = msg.sender || 'Unknown';
+        stats.senders[sender] = (stats.senders[sender] || 0) + 1;
+        
+        const timestamp = msg.timestamp || '';
+        if (timestamp) {
+            try {
+                const date = timestamp.split('T')[0] || timestamp.split(' ')[0] || timestamp.substring(0, 10);
+                if (date && date.length >= 8) { // Valid date format
+                    dates.push(date);
+                    stats.messages_per_day[date] = (stats.messages_per_day[date] || 0) + 1;
+                }
+            } catch (e) {
+                // Ignore invalid dates
+            }
+        }
+    });
+    
+    if (dates.length > 0) {
+        const sortedDates = dates.sort();
+        stats.date_range = {
+            first: sortedDates[0],
+            last: sortedDates[sortedDates.length - 1]
+        };
+    }
+    
+    return stats;
+}
+
+// Parse uploaded file
+async function parseUploadedFile(file) {
+    let files = {};
+    
+    if (file.name.endsWith('.zip')) {
+        // Extract ZIP - JSZip can handle ArrayBuffer directly
+        const arrayBuffer = await file.arrayBuffer();
+        files = await extractZip(arrayBuffer);
+    } else {
+        // Single file
+        const content = await file.text();
+        files[file.name] = content;
+    }
+    
+    if (Object.keys(files).length === 0) {
+        throw new Error('Keine Dateien gefunden');
+    }
+    
+    // Parse all files
+    const allMessages = [];
+    for (const [filename, content] of Object.entries(files)) {
+        let messages = [];
+        console.log(`Parsing file: ${filename}, size: ${content.length} chars`);
+        
+        // Show first 500 chars for debugging
+        console.log('First 500 chars of file:', content.substring(0, 500));
+        
+        if (filename.endsWith('.txt')) {
+            // Set up logging
+            const parseLogDiv = document.getElementById('parseLog');
+            const parseLogContent = document.getElementById('parseLogContent');
+            if (parseLogDiv && parseLogContent) {
+                parseLogDiv.style.display = 'block';
+                parseLogContent.textContent = '';
+            }
+            
+            const logMessages = [];
+            const logCallback = (msg) => {
+                logMessages.push(msg);
+                if (parseLogContent) {
+                    parseLogContent.textContent = logMessages.join('\n');
+                    parseLogContent.scrollTop = parseLogContent.scrollHeight;
+                }
+            };
+            
+            messages = parseTxtChat(content, logCallback);
+            console.log(`Found ${messages.length} messages in ${filename}`);
+            if (messages.length === 0) {
+                console.warn('No messages found. File format might not be recognized.');
+                console.log('First 10 lines:', content.split('\n').slice(0, 10).join('\n'));
+            }
+        } else if (filename.endsWith('.html')) {
+            messages = parseHtmlChat(content);
+            console.log(`Found ${messages.length} messages in ${filename}`);
+        } else if (filename.endsWith('.json')) {
+            messages = parseJsonChat(content);
+            console.log(`Found ${messages.length} messages in ${filename}`);
+        } else {
+            // Try to parse as text anyway
+            console.log(`Unknown file type, trying text parser for ${filename}`);
+            // Set up logging
+            const parseLogDiv = document.getElementById('parseLog');
+            const parseLogContent = document.getElementById('parseLogContent');
+            if (parseLogDiv && parseLogContent) {
+                parseLogDiv.style.display = 'block';
+                parseLogContent.textContent = '';
+            }
+            
+            const logMessages = [];
+            const logCallback = (msg) => {
+                logMessages.push(msg);
+                if (parseLogContent) {
+                    parseLogContent.textContent = logMessages.join('\n');
+                    parseLogContent.scrollTop = parseLogContent.scrollHeight;
+                }
+            };
+            
+            messages = parseTxtChat(content, logCallback);
+            console.log(`Found ${messages.length} messages in ${filename}`);
+        }
+        allMessages.push(...messages);
+    }
+    
+    console.log(`Total messages parsed: ${allMessages.length}`);
+    
+    // Analyze
+    const stats = analyzeMessages(allMessages);
+    
+    return {
+        success: true,
+        messages: allMessages,
+        statistics: stats,
+        files_parsed: Object.keys(files).length
+    };
+}
+
+// Generate summary tables per worker
+function generateSummaryTables(messages) {
+    const summaryTablesDiv = document.getElementById('summaryTables');
+    if (!summaryTablesDiv) return;
+    
+    // Group messages by worker
+    const workerData = {};
+    
+    messages.forEach(msg => {
+        if (!msg.sender || !msg.startTime || !msg.endTime) return;
+        
+        const worker = msg.sender;
+        if (!workerData[worker]) {
+            workerData[worker] = {
+                workingDays: new Set(),
+                totalNettoMinutes: 0,
+                totalRegieMinutes: 0,
+                regieTypes: new Set()
+            };
+        }
+        
+        // Count working days (unique dates)
+        if (msg.workDate || msg.date) {
+            workerData[worker].workingDays.add(msg.workDate || msg.date);
+        }
+        
+        // Sum netto time
+        if (msg.nettoTime) {
+            const [hours, minutes] = msg.nettoTime.split(':').map(Number);
+            workerData[worker].totalNettoMinutes += hours * 60 + minutes;
+        }
+        
+        // Sum all regie hours and collect unique types
+        if (msg.regieTime) {
+            const [regieHours, regieMinutes] = msg.regieTime.split(':').map(Number);
+            workerData[worker].totalRegieMinutes += regieHours * 60 + regieMinutes;
+            
+            // Collect unique regie types
+            if (msg.regieType && msg.regieType.trim()) {
+                // Handle comma-separated types (from multiple regie entries)
+                const types = msg.regieType.split(',').map(t => t.trim()).filter(t => t);
+                types.forEach(type => workerData[worker].regieTypes.add(type));
+            }
+        }
+    });
+    
+    // Generate HTML for summary tables
+    let summaryHTML = '';
+    
+    Object.keys(workerData).sort().forEach(worker => {
+        const data = workerData[worker];
+        const workingDays = data.workingDays.size;
+        const totalHours = Math.floor(data.totalNettoMinutes / 60);
+        const totalMinutes = data.totalNettoMinutes % 60;
+        const totalHoursFormatted = `${String(totalHours).padStart(2, '0')}:${String(totalMinutes).padStart(2, '0')}`;
+        
+        const regieHours = Math.floor(data.totalRegieMinutes / 60);
+        const regieMins = data.totalRegieMinutes % 60;
+        const regieFormatted = `${String(regieHours).padStart(2, '0')}:${String(regieMins).padStart(2, '0')}`;
+        
+        const regieTypesList = Array.from(data.regieTypes).sort().map(type => 
+            `<span class="pill">${type}</span>`
+        ).join('');
+        
+        summaryHTML += `
+            <div class="summary-section">
+                <h3>${worker}</h3>
+                <table class="summary-table" style="width: auto;">
+                    <thead>
+                        <tr>
+                            <th style="text-align: left; white-space: nowrap;">Metric</th>
+                            <th style="text-align: right; white-space: nowrap;">Value</th>
+                            <th style="text-align: left; white-space: nowrap;">Note</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Working Days</strong></td>
+                            <td style="text-align: right;">${workingDays}</td>
+                            <td></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Working Hours (Netto)</strong></td>
+                            <td style="text-align: right;">${totalHoursFormatted}</td>
+                            <td></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Regie Hours (Total)</strong></td>
+                            <td style="text-align: right;">${regieFormatted}</td>
+                            <td>${regieTypesList || '-'}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        `;
+    });
+    
+    summaryTablesDiv.innerHTML = summaryHTML;
+}
+
+// Scroll to date in main table
+function scrollToDate() {
+    const gotoDateInput = document.getElementById('gotoDate');
+    if (!gotoDateInput || !gotoDateInput.value) return;
+    
+    const targetDate = gotoDateInput.value; // YYYY-MM-DD format
+    const targetDateFormatted = formatDateToDDMMYYYY(targetDate);
+    
+    const table = document.getElementById('messagesTable');
+    if (!table) return;
+    
+    const rows = table.querySelectorAll('tbody tr');
+    let foundRow = null;
+    
+    // Search for first row with matching date
+    for (const row of rows) {
+        const dateCell = row.querySelector('[data-field="date"]');
+        if (!dateCell) continue;
+        
+        const cellDate = (dateCell.textContent || dateCell.innerText || '').trim();
+        // Compare dates - convert both to comparable format
+        const cellDateComparable = parseDateToComparable(cellDate);
+        if (cellDateComparable === targetDate) {
+            foundRow = row;
+            break;
+        }
+    }
+    
+    if (foundRow) {
+        // Scroll to the row
+        foundRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        
+        // Highlight the row briefly
+        const originalBg = foundRow.style.backgroundColor;
+        foundRow.style.backgroundColor = '#fff3cd';
+        foundRow.style.transition = 'background-color 0.3s';
+        setTimeout(() => {
+            foundRow.style.backgroundColor = originalBg || '';
+            setTimeout(() => {
+                foundRow.style.transition = '';
+            }, 300);
+        }, 2000);
+    } else {
+        alert(`Date ${targetDateFormatted} not found in the table.`);
+    }
+}
+
+// Update stats tables from DOM data
+function updateStatsFromDOM() {
+    const table = document.getElementById('messagesTable');
+    if (!table) return;
+    
+    const rows = table.querySelectorAll('tbody tr');
+    const messages = Array.from(rows).map(row => {
+        const getCellValue = (field) => {
+            const cell = row.querySelector(`[data-field="${field}"]`);
+            if (!cell) return '';
+            const text = (cell.textContent || cell.innerText || '').trim();
+            return text.replace(/N\/A/gi, '').replace(/<[^>]*>/g, '');
+        };
+        
+        const messageCell = row.querySelector('.col-message');
+        const messageText = messageCell ? (messageCell.textContent || messageCell.innerText || '').trim() : '';
+        
+        // Recalculate netto time from current values to ensure accuracy
+        const startTime = getCellValue('startTime');
+        const endTime = getCellValue('endTime');
+        const breakTime = getCellValue('breakTime');
+        const regieTime = getCellValue('regieTime');
+        // Netto = (end - start) - break (no regie subtraction)
+        const nettoTime = calculateNettoTime(startTime, endTime, breakTime, '') || getCellValue('nettoTime');
+        
+        return {
+            sender: getCellValue('sender'),
+            workDate: getCellValue('date'),
+            date: getCellValue('msgDate'),
+            startTime: startTime,
+            endTime: endTime,
+            breakTime: breakTime,
+            nettoTime: nettoTime,
+            regieTime: regieTime,
+            regieType: getCellValue('regieType'),
+            message: messageText
+        };
+    });
+    
+    generateSummaryTables(messages);
+}
+
+// Export to CSV function - reads from DOM to include edited values
+function exportToCSV() {
+    const table = document.getElementById('messagesTable');
+    if (!table) {
+        alert('Keine Tabelle zum Exportieren vorhanden.');
+        return;
+    }
+    
+    const rows = table.querySelectorAll('tbody tr');
+    if (rows.length === 0) {
+        alert('Keine Daten zum Exportieren vorhanden.');
+        return;
+    }
+    
+    // CSV header
+    const headers = [
+        'Msg Date',
+        'Date',
+        'Start',
+        'End',
+        'Break',
+        'Netto',
+        'Regie-hrs',
+        'Regie-type',
+        'Worker',
+        'Log-Text'
+    ];
+    
+    // Extract data from DOM (read edited values)
+    const csvRows = Array.from(rows).map(row => {
+        const getCellValue = (field) => {
+            const cell = row.querySelector(`[data-field="${field}"]`);
+            if (!cell) return '';
+            // Remove HTML tags and get text content
+            const text = cell.textContent || cell.innerText || '';
+            return text.trim();
+        };
+        
+        // Get message text from the last column (not editable)
+        const messageCell = row.querySelector('.col-message');
+        const messageText = messageCell ? (messageCell.textContent || messageCell.innerText || '').replace(/\n/g, ' ').trim() : '';
+        
+        return [
+            getCellValue('msgDate'),
+            getCellValue('date'),
+            getCellValue('startTime'),
+            getCellValue('endTime'),
+            getCellValue('breakTime'),
+            getCellValue('nettoTime'),
+            getCellValue('regieTime'),
+            getCellValue('regieType'),
+            getCellValue('sender'),
+            messageText
+        ].map(field => `"${(field || '').replace(/"/g, '""')}"`).join(';');
+    });
+    
+    // Combine header and rows
+    const csvContent = [
+        headers.map(h => `"${h}"`).join(';'),
+        ...csvRows
+    ].join('\n');
+    
+    // Create blob and download
+    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' }); // BOM for Excel
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `whatsapp-export-${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+// Global variable to store all parsed messages
+let allParsedMessages = [];
+
+// Convert dd.mm.yyyy to YYYY-MM-DD for date comparison
+function parseDateToComparable(dateStr) {
+    if (!dateStr) return null;
+    
+    // Handle dd.mm.yyyy format
+    const match = dateStr.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+    if (match) {
+        return `${match[3]}-${match[2]}-${match[1]}`;
+    }
+    
+    // Handle dd.mm.yy format
+    const match2 = dateStr.match(/^(\d{2})\.(\d{2})\.(\d{2})$/);
+    if (match2) {
+        const year = '20' + match2[3];
+        return `${year}-${match2[2]}-${match2[1]}`;
+    }
+    
+    // Handle dd.mm format - use current year
+    const match3 = dateStr.match(/^(\d{2})\.(\d{2})\.?$/);
+    if (match3) {
+        const year = new Date().getFullYear();
+        return `${year}-${match3[2]}-${match3[1]}`;
+    }
+    
+    // Handle YYYY-MM-DD format
+    if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
+        return dateStr.split(' ')[0]; // Take only date part
+    }
+    
+    return null;
+}
+
+// Filter messages by date range
+function filterMessagesByDate(messages, fromDate, toDate) {
+    if (!fromDate && !toDate) return messages;
+    
+    return messages.filter(msg => {
+        const msgDate = msg.workDate && msg.workDate !== 'N/A' ? msg.workDate : msg.date;
+        if (!msgDate) return false;
+        
+        const comparableDate = parseDateToComparable(formatDateToDDMMYYYY(msgDate));
+        if (!comparableDate) return false;
+        
+        if (fromDate && comparableDate < fromDate) return false;
+        if (toDate && comparableDate > toDate) return false;
+        
+        return true;
+    });
+}
+
+// Find earliest date in messages
+function findEarliestDate(messages) {
+    let earliest = null;
+    
+    messages.forEach(msg => {
+        const msgDate = msg.workDate && msg.workDate !== 'N/A' ? msg.workDate : msg.date;
+        if (!msgDate) return;
+        
+        const comparableDate = parseDateToComparable(formatDateToDDMMYYYY(msgDate));
+        if (comparableDate && (!earliest || comparableDate < earliest)) {
+            earliest = comparableDate;
+        }
+    });
+    
+    return earliest;
+}
+
+// Apply date filter and refresh display
+function applyDateFilter() {
+    const fromDateInput = document.getElementById('fromDate');
+    const toDateInput = document.getElementById('toDate');
+    
+    if (!fromDateInput || !toDateInput || allParsedMessages.length === 0) return;
+    
+    const fromDate = fromDateInput.value || null;
+    const toDate = toDateInput.value || null;
+    
+    const filteredMessages = filterMessagesByDate(allParsedMessages, fromDate, toDate);
+    
+    // Re-display filtered messages
+    displayFilteredMessages(filteredMessages);
+}
+
+// Display filtered messages (similar to original display logic but with filtered data)
+function displayFilteredMessages(messages) {
+    const messagesList = document.getElementById('messagesList');
+    const statistics = document.getElementById('statistics');
+    
+    if (!messagesList || !statistics) return;
+    
+    // Update statistics
+    const stats = analyzeMessages(messages);
+    const allStats = analyzeMessages(allParsedMessages);
+    statistics.innerHTML = `
+        <h3>Statistiken</h3>
+        <div class="stat-item"><strong>Gesamt Nachrichten:</strong> ${allStats.total_messages || 0}</div>
+        <div class="stat-item"><strong>Gefilterte Nachrichten:</strong> ${messages.length} von ${allParsedMessages.length}</div>
+        ${stats.date_range && stats.date_range.first ? `
+            <div class="stat-item"><strong>Zeitraum (gefiltert):</strong> ${stats.date_range.first} bis ${stats.date_range.last || stats.date_range.first}</div>
+        ` : ''}
+        <div class="stat-item"><strong>Nachrichten pro Person (gefiltert):</strong>
+            <ul>
+                ${stats.senders && Object.keys(stats.senders).length > 0 ? 
+                    Object.entries(stats.senders).map(([sender, count]) => 
+                        `<li>${sender}: ${count}</li>`
+                    ).join('') : '<li>Keine Sender gefunden</li>'
+                }
+            </ul>
+        </div>
+    `;
+    
+    // Find unmatched messages
+    const unmatchedMessages = messages.filter(msg => 
+        msg.unmatched || (!msg.workDate && !msg.startTime && !msg.endTime && 
+        !msg.breakTime && !msg.regieTime && !msg.regieType && 
+        msg.workDate !== 'N/A' && msg.startTime !== 'N/A')
+    );
+    
+    // Display unmatched messages log
+    const unmatchedDiv = document.getElementById('unmatchedMessages');
+    const unmatchedList = document.getElementById('unmatchedMessagesList');
+    if (unmatchedMessages.length > 0 && unmatchedDiv && unmatchedList) {
+        unmatchedList.innerHTML = unmatchedMessages.map((msg, idx) => `
+            <div style="margin-bottom: 10px; padding: 8px; background: white; border-left: 3px solid #ffc107; border-radius: 2px;">
+                <strong>#${idx + 1}</strong> - <strong>${msg.sender || 'Unknown'}</strong> (${msg.date || 'N/A'}, ${msg.time || 'N/A'}):<br>
+                <code style="display: block; margin-top: 5px; padding: 5px; background: #f8f9fa; border-radius: 2px; white-space: pre-wrap; font-size: 12px;">${(msg.message || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code>
+            </div>
+        `).join('');
+        unmatchedDiv.style.display = 'block';
+    } else if (unmatchedDiv) {
+        unmatchedDiv.style.display = 'none';
+    }
+    
+    // Group messages by original message to highlight properly
+    const messageGroups = {};
+    messages.forEach(msg => {
+        const key = `${msg.date}_${msg.time}_${msg.sender}_${msg.message}`;
+        if (!messageGroups[key]) {
+            messageGroups[key] = {
+                msg: msg,
+                entries: []
+            };
+        }
+        messageGroups[key].entries.push({
+            workDate: msg.workDate,
+            startTime: msg.startTime,
+            endTime: msg.endTime,
+            timeRangeOriginalText: msg.timeRangeOriginalText || '',
+            breakTime: msg.breakTime,
+            breakOriginalText: msg.breakOriginalText || '',
+            regieTime: msg.regieTime,
+            regieType: msg.regieType,
+            regieOriginalText: msg.regieOriginalText || '',
+            additionalDates: msg.additionalDates || []
+        });
+    });
+    
+    const tableRows = messages.map((msg, index) => {
+        // Find entries for this message
+        const key = `${msg.date}_${msg.time}_${msg.sender}_${msg.message}`;
+        const group = messageGroups[key];
+        // Only highlight if we have actual extracted values (not all empty)
+        const hasExtractedData = group && group.entries.some(entry => 
+            entry.workDate || entry.startTime || entry.endTime || entry.breakTime || entry.regieTime || entry.regieType
+        );
+        const highlightedMessage = hasExtractedData ? highlightMessage(msg.message, group.entries) : msg.message;
+        
+        const isUnmatched = msg.unmatched || msg.workDate === 'N/A';
+        const msgDateValue = formatDateToDDMMYYYY(msg.date || '');
+        const dateValue = formatDateToDDMMYYYY(msg.workDate === 'N/A' ? msg.date : (msg.workDate || msg.date || ''));
+        const formatCellValue = (value) => {
+            if (value === 'N/A') return '<span style="color: #999; font-style: italic;">N/A</span>';
+            return value || '';
+        };
+        
+        return `
+        <tr${isUnmatched ? ' style="background-color: #fff3cd;"' : ''} data-row-index="${index}">
+            <td class="col-msg-date" data-field="msgDate">${msgDateValue}</td>
+            <td class="col-date editable-number" contenteditable="true" data-field="date">${dateValue}</td>
+            <td class="col-name" data-field="sender">${msg.sender || 'Unknown'}</td>
+            <td class="col-start-time editable-number" contenteditable="true" data-field="startTime">${formatCellValue(msg.startTime)}</td>
+            <td class="col-end-time editable-number" contenteditable="true" data-field="endTime">${formatCellValue(msg.endTime)}</td>
+            <td class="col-break editable-number" contenteditable="true" data-field="breakTime">${formatCellValue(msg.breakTime)}</td>
+            <td class="col-netto" data-field="nettoTime">${formatCellValue(msg.nettoTime)}</td>
+            <td class="col-regie editable-number" contenteditable="true" data-field="regieTime">${formatCellValue(msg.regieTime)}</td>
+            <td class="col-regie-type" contenteditable="true" data-field="regieType">${formatCellValue(msg.regieType)}</td>
+            <td class="col-message">${highlightedMessage.replace(/\n/g, '<br>')}</td>
+        </tr>
+    `;
+    }).join('');
+    
+    messagesList.innerHTML = tableRows;
+    
+    // Add event listeners for editable cells
+    const editableCells = messagesList.querySelectorAll('td[contenteditable="true"]');
+    editableCells.forEach(cell => {
+        cell.addEventListener('blur', function() {
+            const row = this.closest('tr');
+            const field = this.getAttribute('data-field');
+            
+            // Get the updated value from the edited cell
+            let updatedValue = (this.textContent || this.innerText || '').trim().replace(/N\/A/gi, '').replace(/<[^>]*>/g, '');
+            
+            // Validate input format
+            let isValid = true;
+            let errorMessage = '';
+            
+            if (field === 'date') {
+                if (updatedValue && !validateDateFormat(updatedValue)) {
+                    isValid = false;
+                    errorMessage = 'Invalid date format. Please use dd.mm.yyyy (e.g., 25.12.2024)';
+                }
+            } else if (['startTime', 'endTime', 'breakTime', 'regieTime'].includes(field)) {
+                if (updatedValue && !validateTimeFormat(updatedValue)) {
+                    isValid = false;
+                    errorMessage = 'Invalid time format. Please use HH:MM (e.g., 08:30)';
+                }
+            }
+            
+            if (!isValid) {
+                alert(errorMessage);
+                // Restore previous value or clear if invalid
+                this.textContent = '';
+                this.focus();
+                return;
+            }
+            
+            // If date changed, update stats (filtering might change)
+            if (field === 'date') {
+                updateStatsFromDOM();
+                return;
+            }
+            
+            // Recalculate netto if start, end, or break changed
+            if (['startTime', 'endTime', 'breakTime'].includes(field)) {
+                const startCell = row.querySelector('[data-field="startTime"]');
+                const endCell = row.querySelector('[data-field="endTime"]');
+                const breakCell = row.querySelector('[data-field="breakTime"]');
+                const nettoCell = row.querySelector('[data-field="nettoTime"]');
+                
+                if (nettoCell) {
+                    // Use the updated value for the current cell, others from DOM
+                    const startTime = field === 'startTime' ? updatedValue : (startCell?.textContent || '').trim().replace(/N\/A/gi, '').replace(/<[^>]*>/g, '');
+                    const endTime = field === 'endTime' ? updatedValue : (endCell?.textContent || '').trim().replace(/N\/A/gi, '').replace(/<[^>]*>/g, '');
+                    const breakTime = field === 'breakTime' ? updatedValue : (breakCell?.textContent || '').trim().replace(/N\/A/gi, '').replace(/<[^>]*>/g, '');
+                    
+                    const netto = calculateNettoTime(startTime, endTime, breakTime, '');
+                    nettoCell.textContent = netto || '';
+                }
+            }
+            
+            // Validate regie-hrs <= netto if regie changed
+            if (field === 'regieTime') {
+                const nettoCell = row.querySelector('[data-field="nettoTime"]');
+                const nettoTime = nettoCell ? (nettoCell.textContent || '').trim().replace(/N\/A/gi, '').replace(/<[^>]*>/g, '') : '';
+                
+                if (updatedValue && nettoTime && !validateRegieVsNetto(updatedValue, nettoTime)) {
+                    alert(`Regie hours (${updatedValue}) cannot exceed netto time (${nettoTime})`);
+                    this.textContent = '';
+                    this.focus();
+                    return;
+                }
+            }
+            
+            // Always update stats tables after any edit
+            updateStatsFromDOM();
+        });
+    });
+    
+    // Generate summary tables with filtered messages
+    generateSummaryTables(messages);
+    
+    // Log number of rows added to table
+    const rowCount = messages.length;
+    const parseLogContent = document.getElementById('parseLogContent');
+    if (parseLogContent) {
+        const currentLog = parseLogContent.textContent || '';
+        parseLogContent.textContent = currentLog + `\n\n=== Table Display (Filtered) ===\nRows added to table: ${rowCount}\nFiltered from ${allParsedMessages.length} total messages`;
+        parseLogContent.scrollTop = parseLogContent.scrollHeight;
+    }
+}
+
+// Form handler
+document.addEventListener('DOMContentLoaded', () => {
+    const form = document.getElementById('parseForm');
+    if (!form) {
+        console.error('Form not found');
+        return;
+    }
+    
+    // Update filename display when file is selected
+    const fileInput = document.getElementById('fileInput');
+    const fileName = document.getElementById('fileName');
+    if (fileInput && fileName) {
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files.length > 0) {
+                fileName.textContent = e.target.files[0].name;
+            } else {
+                fileName.textContent = 'Keine Datei ausgewählt';
+            }
+        });
+    }
+    
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const fileInput = document.getElementById('fileInput');
+        const parseBtn = document.getElementById('parseBtn');
+        const loading = document.getElementById('loading');
+        const error = document.getElementById('error');
+        const results = document.getElementById('results');
+        const statistics = document.getElementById('statistics');
+        const messagesList = document.getElementById('messagesList');
+
+        if (!fileInput || !parseBtn || !loading || !error || !results || !statistics || !messagesList) {
+            console.error('Required elements not found');
+            return;
+        }
+        
+        parseBtn.disabled = true;
+        loading.style.display = 'block';
+        error.style.display = 'none';
+        results.style.display = 'none';
+
+        try {
+            let data;
+            
+            // Check if file is uploaded
+            if (!fileInput.files || fileInput.files.length === 0) {
+                error.textContent = 'Bitte wählen Sie eine Datei aus.';
+                error.style.display = 'block';
+                parseBtn.disabled = false;
+                loading.style.display = 'none';
+                return;
+            }
+            
+            data = await parseUploadedFile(fileInput.files[0]);
+
+            if (data.error) {
+                error.textContent = data.error + (data.details ? ': ' + data.details : '');
+                error.style.display = 'block';
+            } else if (data.success) {
+                // Store all parsed messages globally
+                allParsedMessages = data.messages || [];
+                
+                // Find earliest date and set default filter values
+                const earliestDate = findEarliestDate(allParsedMessages);
+                const today = new Date().toISOString().split('T')[0];
+                
+                const fromDateInput = document.getElementById('fromDate');
+                const toDateInput = document.getElementById('toDate');
+                
+                if (fromDateInput && earliestDate) {
+                    fromDateInput.value = earliestDate;
+                }
+                if (toDateInput) {
+                    toDateInput.value = today;
+                }
+                
+                // Show date filter
+                const dateFilter = document.getElementById('dateFilter');
+                if (dateFilter) {
+                    dateFilter.style.display = 'block';
+                }
+                
+                // Apply initial filter and display
+                applyDateFilter();
+
+                results.style.display = 'block';
+                
+                // Store messages data for export
+                window.parsedMessages = data.messages;
+                
+                // Setup export button
+                const exportBtn = document.getElementById('exportBtn');
+                if (exportBtn) {
+                    exportBtn.onclick = () => exportToCSV();
+                }
+                
+                // Add event listeners to date filter inputs (reuse variables from above)
+                if (fromDateInput) {
+                    fromDateInput.addEventListener('change', applyDateFilter);
+                }
+                if (toDateInput) {
+                    toDateInput.addEventListener('change', applyDateFilter);
+                }
+                
+                // Setup goto date functionality
+                const gotoDateInput = document.getElementById('gotoDate');
+                const gotoDateBtn = document.getElementById('gotoDateBtn');
+                
+                // Prefill goto date with today
+                if (gotoDateInput) {
+                    const today = new Date().toISOString().split('T')[0];
+                    gotoDateInput.value = today;
+                    
+                    gotoDateInput.addEventListener('keypress', (e) => {
+                        if (e.key === 'Enter') {
+                            scrollToDate();
+                        }
+                    });
+                }
+                if (gotoDateBtn) {
+                    gotoDateBtn.addEventListener('click', scrollToDate);
+                }
+            } else {
+                error.textContent = 'Unbekannter Fehler beim Parsen.';
+                error.style.display = 'block';
+            }
+        } catch (err) {
+            error.textContent = 'Fehler: ' + err.message;
+            error.style.display = 'block';
+            console.error('Parse error:', err);
+        } finally {
+            parseBtn.disabled = false;
+            loading.style.display = 'none';
+        }
+    });
+});
+
+

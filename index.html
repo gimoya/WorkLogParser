@@ -3,118 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>WhatsApp Chat Parser</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f5f5f5;
-            padding: 20px;
-        }
-        .container {
-            max-width: 600px;
-            margin: 0 auto;
-            background: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        h1 {
-            color: #25D366;
-            margin-bottom: 20px;
-        }
-        .form-group {
-            margin-bottom: 20px;
-        }
-        label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 600;
-            color: #333;
-        }
-        input[type="text"] {
-            width: 100%;
-            padding: 12px;
-            font-size: 14px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-        button {
-            width: 100%;
-            padding: 12px;
-            font-size: 16px;
-            background: #25D366;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        button:hover {
-            background: #20BA5A;
-        }
-        button:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-        }
-        .loading {
-            text-align: center;
-            padding: 20px;
-            color: #666;
-            display: none;
-        }
-        .error {
-            background: #fee;
-            color: #c33;
-            padding: 15px;
-            border-radius: 4px;
-            margin-top: 20px;
-            display: none;
-        }
-        .results {
-            margin-top: 20px;
-            display: none;
-        }
-        .statistics {
-            background: #f9f9f9;
-            padding: 15px;
-            border-radius: 4px;
-            margin-bottom: 20px;
-        }
-        .statistics h3 {
-            margin-bottom: 10px;
-        }
-        .stat-item {
-            margin: 8px 0;
-        }
-        .messages-list {
-            max-height: 400px;
-            overflow-y: auto;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            padding: 10px;
-        }
-        .message-item {
-            padding: 8px;
-            border-bottom: 1px solid #eee;
-        }
-        .message-item:last-child {
-            border-bottom: none;
-        }
-        .message-header {
-            font-weight: 600;
-            color: #25D366;
-            margin-bottom: 4px;
-        }
-        .message-time {
-            font-size: 12px;
-            color: #666;
-            margin-left: 10px;
-        }
-    </style>
+    <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 <body>
@@ -123,26 +16,22 @@
         
         <form id="parseForm">
             <div class="form-group">
-                <label for="fileInput">Datei hochladen (empfohlen):</label>
+                <label for="fileInput">WhatsApp Chat Export auswählen:</label>
+                <div class="file-input-wrapper">
                 <input 
                     type="file" 
                     id="fileInput" 
-                    accept=".zip,.txt,.html,.json"
+                    accept=".zip"
+                    required
                 >
-                <small style="color: #666; display: block; margin-top: 5px;">
-                    Laden Sie die ZIP-Datei von Google Drive herunter und wählen Sie sie hier aus.
-                </small>
-            </div>
-            <div class="form-group">
-                <label for="gdriveUrl">Oder Google Drive Link:</label>
-                <input 
-                    type="text" 
-                    id="gdriveUrl" 
-                    placeholder="https://drive.google.com/file/d/..."
-                    value="https://drive.google.com/file/d/1FftlNOHxGpZIntT6_Dk7AF5aE5BjJN2N/view?usp=drive_link"
-                >
-                <small style="color: #666; display: block; margin-top: 5px;">
-                    Funktioniert mit PHP-Proxy (proxy.php muss verfügbar sein)
+                    <label for="fileInput" class="file-input-label">
+                        <span class="file-input-icon">📁</span>
+                        <span class="file-input-text">Datei auswählen</span>
+                    </label>
+                    <span class="file-input-filename" id="fileName">Keine Datei ausgewählt</span>
+                </div>
+                <small style="color: #666; display: block; margin-top: 8px;">
+                    Wählen Sie eine ZIP-Datei mit WhatsApp-Chat-Export (.txt Dateien)
                 </small>
             </div>
             <button type="submit" id="parseBtn">Chat export parsen</button>
@@ -150,479 +39,77 @@
 
         <div id="loading" class="loading">Lade und parse Chat-Export...</div>
         <div id="error" class="error"></div>
+        <div id="parseLog" style="display: none; margin: 20px 0; padding: 15px; background: #e7f3ff; border: 1px solid #b3d9ff; border-radius: 4px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto;">
+            <h3 style="margin: 0 0 10px 0; color: #004085;">📋 Parsing Log</h3>
+            <div id="parseLogContent" style="white-space: pre-wrap;"></div>
+        </div>
 
         <div id="results" class="results">
             <div class="statistics" id="statistics"></div>
-            <h3>Nachrichten (erste 100):</h3>
-            <div class="messages-list" id="messagesList"></div>
+            <div id="summaryTables"></div>
+                    <div id="unmatchedMessages" style="display: none; margin-bottom: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px;">
+                        <h3 style="margin: 0 0 10px 0; color: #856404;">⚠️ Unmatched Messages (No Fields Extracted)</h3>
+                        <div id="unmatchedMessagesList" style="max-height: 200px; overflow-y: auto;"></div>
+                    </div>
+            <div id="dateFilter" class="date-filter" style="display: none; margin-bottom: 20px; padding: 15px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px;">
+                <h3 style="margin: 0 0 15px 0;">Date Filter</h3>
+                <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <label for="fromDate" style="font-weight: 500;">From:</label>
+                        <input type="date" id="fromDate" style="padding: 6px 10px; border: 1px solid #ced4da; border-radius: 4px; font-size: 14px;">
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <label for="toDate" style="font-weight: 500;">To:</label>
+                        <input type="date" id="toDate" style="padding: 6px 10px; border: 1px solid #ced4da; border-radius: 4px; font-size: 14px;">
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <label for="gotoDate" style="font-weight: 500;">Go to Date:</label>
+                        <input type="date" id="gotoDate" style="padding: 6px 10px; border: 1px solid #ced4da; border-radius: 4px; font-size: 14px;">
+                        <button type="button" id="gotoDateBtn" style="padding: 6px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">Go</button>
+                    </div>
+                </div>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h3 style="margin: 0;">Work Log:</h3>
+                        <button type="button" id="exportBtn" style="padding: 8px 16px; background: #25D366; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; display: inline-block;">
+                    CSV Export
+                </button>
+            </div>
+            <div class="messages-table-wrapper">
+                <table class="messages-table" id="messagesTable">
+                    <colgroup>
+                        <col class="col-msg-date">
+                        <col class="col-date">
+                        <col class="col-name">
+                        <col class="col-start-time">
+                        <col class="col-end-time">
+                        <col class="col-break">
+                        <col class="col-netto">
+                        <col class="col-regie">
+                        <col class="col-regie-type">
+                        <col class="col-message">
+                    </colgroup>
+                    <thead>
+                        <tr>
+                            <th class="col-msg-date">Msg Date</th>
+                            <th class="col-date">Date</th>
+                            <th class="col-name">Worker</th>
+                            <th class="col-start-time">Start</th>
+                            <th class="col-end-time">End</th>
+                            <th class="col-break">Break</th>
+                            <th class="col-netto">Netto</th>
+                            <th class="col-regie">Regie-hrs</th>
+                            <th class="col-regie-type">Regie-type</th>
+                            <th class="col-message">Log-Text</th>
+                        </tr>
+                    </thead>
+                    <tbody id="messagesList">
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 
-    <script>
-        // Extract file ID from Google Drive URL
-        function extractFileId(url) {
-            // Pattern: https://drive.google.com/file/d/ID/view?usp=drive_link
-            if (url.includes('/file/d/')) {
-                const match = url.match(/\/file\/d\/([^\/\?]+)/);
-                if (match) return match[1];
-            }
-            // Pattern: https://drive.google.com/drive/folders/ID
-            if (url.includes('/folders/')) {
-                const match = url.match(/\/folders\/([^\/\?]+)/);
-                if (match) return match[1];
-            }
-            // Pattern: ?id=ID or &id=ID
-            if (url.includes('id=')) {
-                const match = url.match(/[?&]id=([^&]+)/);
-                if (match) return match[1];
-            }
-            return null;
-        }
-
-        // Download file from Google Drive via PHP proxy
-        async function downloadFromGoogleDrive(fileId) {
-            try {
-                // Try PHP proxy first
-                const proxyUrl = `proxy.php?id=${encodeURIComponent(fileId)}`;
-                const response = await fetch(proxyUrl);
-                
-                if (!response.ok) {
-                    throw new Error(`Proxy error: ${response.status}`);
-                }
-                
-                const result = await response.json();
-                
-                if (result.error) {
-                    throw new Error(result.error);
-                }
-                
-                if (!result.success || !result.data) {
-                    throw new Error('Invalid response from proxy');
-                }
-                
-                // Convert base64 to blob
-                const binaryString = atob(result.data);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
-                
-                // Determine MIME type
-                const mimeType = result.contentType || 'application/octet-stream';
-                const blob = new Blob([bytes], { type: mimeType });
-                
-                return blob;
-                
-            } catch (error) {
-                // If PHP proxy fails, try direct download (will likely fail due to CORS)
-                try {
-                    const url = `https://drive.google.com/uc?export=view&id=${fileId}`;
-                    const response = await fetch(url, { 
-                        method: 'GET',
-                        mode: 'cors',
-                        credentials: 'omit',
-                        redirect: 'follow',
-                        cache: 'no-cache'
-                    });
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    
-                    const contentType = response.headers.get('content-type') || '';
-                    if (contentType.includes('text/html')) {
-                        throw new Error('Google Drive erfordert Anmeldung oder die Datei ist nicht öffentlich zugänglich.');
-                    }
-                    
-                    return await response.blob();
-                } catch (directError) {
-                    throw new Error('Google Drive Download fehlgeschlagen. Bitte verwenden Sie die Datei-Upload-Funktion oder stellen Sie sicher, dass proxy.php verfügbar ist.');
-                }
-            }
-        }
-
-        // Extract ZIP file
-        async function extractZip(input) {
-            if (typeof JSZip === 'undefined') {
-                throw new Error('JSZip library not loaded. Please check your internet connection.');
-            }
-            
-            try {
-                // Convert input to appropriate format if needed
-                let zipInput = input;
-                if (input instanceof ArrayBuffer) {
-                    // JSZip can handle ArrayBuffer directly
-                    zipInput = input;
-                } else if (input instanceof Blob) {
-                    // Convert Blob to ArrayBuffer for better compatibility
-                    zipInput = await input.arrayBuffer();
-                }
-                
-                // Load ZIP file
-                const zip = await JSZip.loadAsync(zipInput);
-                
-                // Validate zip object
-                if (!zip) {
-                    throw new Error('Failed to load ZIP file - zip object is null');
-                }
-                
-                if (!zip.files || typeof zip.files !== 'object') {
-                    throw new Error('Invalid ZIP file structure - files property not found');
-                }
-                
-                const fileContents = {};
-                
-                // Safely iterate through zip.files
-                const fileKeys = Object.keys(zip.files);
-                if (fileKeys.length === 0) {
-                    throw new Error('ZIP file is empty');
-                }
-                
-                fileKeys.forEach(relativePath => {
-                    const file = zip.files[relativePath];
-                    // Check if it's a file (not a directory) and has the right extension
-                    if (file && !file.dir && (relativePath.endsWith('.txt') || relativePath.endsWith('.html') || relativePath.endsWith('.json'))) {
-                        fileContents[relativePath] = file;
-                    }
-                });
-                
-                if (Object.keys(fileContents).length === 0) {
-                    throw new Error('No chat export files (.txt, .html, .json) found in ZIP archive');
-                }
-                
-                // Read all file contents asynchronously
-                const contents = {};
-                const promises = [];
-                
-                for (const [filename, file] of Object.entries(fileContents)) {
-                    promises.push(
-                        file.async('text').then(text => {
-                            contents[filename] = text;
-                        }).catch(err => {
-                            console.error(`Error reading ${filename}:`, err);
-                        })
-                    );
-                }
-                
-                await Promise.all(promises);
-                return contents;
-            } catch (error) {
-                console.error('ZIP extraction error:', error);
-                throw new Error('Failed to extract ZIP file: ' + error.message);
-            }
-        }
-
-        // Parse text format
-        function parseTxtChat(content) {
-            const messages = [];
-            const pattern = /\[(\d{2}\.\d{2}\.\d{4}),\s*(\d{2}:\d{2}:\d{2})\]\s*([^:]+):\s*(.+?)(?=\n\[|\Z)/gs;
-            
-            let match;
-            while ((match = pattern.exec(content)) !== null) {
-                const [, dateStr, timeStr, sender, message] = match;
-                try {
-                    const date = new Date(dateStr.split('.').reverse().join('-') + 'T' + timeStr);
-                    messages.push({
-                        timestamp: date.toISOString(),
-                        date: dateStr,
-                        time: timeStr,
-                        sender: sender.trim(),
-                        message: message.trim()
-                    });
-                } catch (e) {
-                    continue;
-                }
-            }
-            
-            return messages;
-        }
-
-        // Parse HTML format
-        function parseHtmlChat(content) {
-            const messages = [];
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(content, 'text/html');
-            
-            // Try different HTML structures
-            const messageDivs = doc.querySelectorAll('.message, [class*="message"]');
-            
-            messageDivs.forEach(div => {
-                const dateEl = div.querySelector('.date, [class*="date"]');
-                const senderEl = div.querySelector('.author, [class*="author"], [class*="sender"]');
-                const textEl = div.querySelector('.text, [class*="text"], [class*="message"]');
-                
-                if (dateEl && textEl) {
-                    messages.push({
-                        timestamp: dateEl.textContent.trim(),
-                        sender: senderEl ? senderEl.textContent.trim() : 'Unknown',
-                        message: textEl.textContent.trim()
-                    });
-                }
-            });
-            
-            return messages;
-        }
-
-        // Parse JSON format
-        function parseJsonChat(content) {
-            const messages = [];
-            const data = JSON.parse(content);
-            
-            let messagesData = [];
-            if (Array.isArray(data)) {
-                messagesData = data;
-            } else if (data.messages) {
-                messagesData = data.messages;
-            } else if (data.chat && data.chat.messages) {
-                messagesData = data.chat.messages;
-            }
-            
-            messagesData.forEach(msg => {
-                if (typeof msg === 'object') {
-                    messages.push({
-                        timestamp: msg.timestamp || msg.date || '',
-                        sender: msg.sender || msg.from || 'Unknown',
-                        message: msg.message || msg.text || ''
-                    });
-                }
-            });
-            
-            return messages;
-        }
-
-        // Analyze messages
-        function analyzeMessages(messages) {
-            if (!messages.length) return {};
-            
-            const stats = {
-                total_messages: messages.length,
-                senders: {},
-                date_range: {},
-                messages_per_day: {}
-            };
-            
-            const dates = [];
-            messages.forEach(msg => {
-                const sender = msg.sender || 'Unknown';
-                stats.senders[sender] = (stats.senders[sender] || 0) + 1;
-                
-                const timestamp = msg.timestamp || '';
-                if (timestamp) {
-                    try {
-                        const date = timestamp.split('T')[0] || timestamp.split(' ')[0] || timestamp.substring(0, 10);
-                        dates.push(date);
-                        stats.messages_per_day[date] = (stats.messages_per_day[date] || 0) + 1;
-                    } catch (e) {}
-                }
-            });
-            
-            if (dates.length) {
-                stats.date_range = {
-                    first: dates.sort()[0],
-                    last: dates.sort().reverse()[0]
-                };
-            }
-            
-            return stats;
-        }
-
-        // Parse uploaded file
-        async function parseUploadedFile(file) {
-            let files = {};
-            
-            if (file.name.endsWith('.zip')) {
-                // Extract ZIP - JSZip can handle ArrayBuffer directly
-                const arrayBuffer = await file.arrayBuffer();
-                files = await extractZip(arrayBuffer);
-            } else {
-                // Single file
-                const content = await file.text();
-                files[file.name] = content;
-            }
-            
-            if (Object.keys(files).length === 0) {
-                throw new Error('Keine Dateien gefunden');
-            }
-            
-            // Parse all files
-            const allMessages = [];
-            for (const [filename, content] of Object.entries(files)) {
-                let messages = [];
-                if (filename.endsWith('.txt')) {
-                    messages = parseTxtChat(content);
-                } else if (filename.endsWith('.html')) {
-                    messages = parseHtmlChat(content);
-                } else if (filename.endsWith('.json')) {
-                    messages = parseJsonChat(content);
-                }
-                allMessages.push(...messages);
-            }
-            
-            // Analyze
-            const stats = analyzeMessages(allMessages);
-            
-            return {
-                success: true,
-                messages: allMessages,
-                statistics: stats,
-                files_parsed: Object.keys(files).length
-            };
-        }
-
-        // Main parse function
-        async function parseWhatsAppExport(url) {
-            const fileId = extractFileId(url);
-            if (!fileId) {
-                throw new Error('Could not extract file ID from URL');
-            }
-            
-            // Download file
-            const blob = await downloadFromGoogleDrive(fileId);
-            
-            // Extract ZIP
-            const files = await extractZip(blob);
-            
-            if (Object.keys(files).length === 0) {
-                throw new Error('No chat export files found in archive');
-            }
-            
-            // Parse all files
-            const allMessages = [];
-            for (const [filename, content] of Object.entries(files)) {
-                let messages = [];
-                if (filename.endsWith('.txt')) {
-                    messages = parseTxtChat(content);
-                } else if (filename.endsWith('.html')) {
-                    messages = parseHtmlChat(content);
-                } else if (filename.endsWith('.json')) {
-                    messages = parseJsonChat(content);
-                }
-                allMessages.push(...messages);
-            }
-            
-            // Analyze
-            const stats = analyzeMessages(allMessages);
-            
-            return {
-                success: true,
-                messages: allMessages,
-                statistics: stats,
-                files_parsed: Object.keys(files).length
-            };
-        }
-
-        // Form handler
-        document.addEventListener('DOMContentLoaded', () => {
-            const form = document.getElementById('parseForm');
-            if (!form) {
-                console.error('Form not found');
-                return;
-            }
-            
-            form.addEventListener('submit', async (e) => {
-                e.preventDefault();
-                
-                const urlInput = document.getElementById('gdriveUrl');
-                const fileInput = document.getElementById('fileInput');
-                const parseBtn = document.getElementById('parseBtn');
-                const loading = document.getElementById('loading');
-                const error = document.getElementById('error');
-                const results = document.getElementById('results');
-                const statistics = document.getElementById('statistics');
-                const messagesList = document.getElementById('messagesList');
-
-                if (!urlInput || !parseBtn || !loading || !error || !results || !statistics || !messagesList) {
-                    console.error('Required elements not found');
-                    return;
-                }
-
-                const url = urlInput.value.trim();
-                
-                parseBtn.disabled = true;
-                loading.style.display = 'block';
-                error.style.display = 'none';
-                results.style.display = 'none';
-
-                try {
-                    let data;
-                    
-                    // Check if file is uploaded or Google Drive link provided
-                    if (fileInput && fileInput.files && fileInput.files.length > 0) {
-                        data = await parseUploadedFile(fileInput.files[0]);
-                    } else if (url) {
-                        // Try Google Drive download via PHP proxy
-                        try {
-                            data = await parseWhatsAppExport(url);
-                        } catch (driveError) {
-                            // If Google Drive fails, suggest file upload
-                            error.innerHTML = `
-                                <strong>Google Drive Download fehlgeschlagen:</strong><br>
-                                ${driveError.message}<br><br>
-                                <strong>Lösung:</strong><br>
-                                1. Laden Sie die ZIP-Datei manuell von Google Drive herunter<br>
-                                2. Verwenden Sie die "Datei hochladen" Option oben<br><br>
-                                Oder stellen Sie sicher, dass proxy.php auf dem Server verfügbar ist.
-                            `;
-                            error.style.display = 'block';
-                            parseBtn.disabled = false;
-                            loading.style.display = 'none';
-                            return;
-                        }
-                    } else {
-                        error.textContent = 'Bitte laden Sie eine Datei hoch oder geben Sie einen Google Drive Link ein.';
-                        error.style.display = 'block';
-                        parseBtn.disabled = false;
-                        loading.style.display = 'none';
-                        return;
-                    }
-
-                if (data.error) {
-                    error.textContent = data.error + (data.details ? ': ' + data.details : '');
-                    error.style.display = 'block';
-                } else if (data.success) {
-                    const stats = data.statistics;
-                    statistics.innerHTML = `
-                        <h3>Statistiken</h3>
-                        <div class="stat-item"><strong>Gesamt Nachrichten:</strong> ${stats.total_messages}</div>
-                        <div class="stat-item"><strong>Datei(en) geparst:</strong> ${data.files_parsed}</div>
-                        ${stats.date_range.first ? `
-                            <div class="stat-item"><strong>Zeitraum:</strong> ${stats.date_range.first} bis ${stats.date_range.last}</div>
-                        ` : ''}
-                        <div class="stat-item"><strong>Nachrichten pro Person:</strong>
-                            <ul>
-                                ${Object.entries(stats.senders).map(([sender, count]) => 
-                                    `<li>${sender}: ${count}</li>`
-                                ).join('')}
-                            </ul>
-                        </div>
-                    `;
-
-                    const messages = data.messages.slice(0, 100);
-                    messagesList.innerHTML = messages.map(msg => `
-                        <div class="message-item">
-                            <div class="message-header">
-                                ${msg.sender || 'Unknown'}
-                                <span class="message-time">${msg.timestamp || msg.date + ' ' + msg.time || ''}</span>
-                            </div>
-                            <div>${msg.message || ''}</div>
-                        </div>
-                    `).join('');
-
-                    results.style.display = 'block';
-                } else {
-                    error.textContent = 'Unbekannter Fehler beim Parsen.';
-                    error.style.display = 'block';
-                }
-            } catch (err) {
-                error.textContent = 'Fehler: ' + err.message;
-                error.style.display = 'block';
-                console.error('Parse error:', err);
-            } finally {
-                    parseBtn.disabled = false;
-                    loading.style.display = 'none';
-                }
-            });
-        });
-    </script>
+    <script src="script.js"></script>
 </body>
 </html>

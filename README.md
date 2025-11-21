@@ -1,49 +1,74 @@
 # WhatsApp Chat Parser
 
-Ein reines JavaScript Tool zum Parsen von WhatsApp Chat-Exports aus Google Drive. Läuft komplett im Browser - kein Server nötig!
+Tool zum Parsen von WhatsApp Chat-Exports und Extrahieren von Arbeitszeiten.
 
 ## Verwendung
 
-### Option 1: Datei-Upload (empfohlen, funktioniert immer)
+1. Öffne `index.html` im Browser
+2. Wähle eine ZIP-Datei mit WhatsApp-Chat-Export (.txt Dateien)
+3. Klicke auf "Chat export parsen"
 
-1. Öffne `index.html` im Browser (doppelklick oder `file://` URL)
-2. Laden Sie die ZIP-Datei von Google Drive herunter
-3. Verwenden Sie die "Datei hochladen" Option
-4. Klicken Sie auf "Chat export parsen"
-
-### Option 2: Google Drive Link (benötigt PHP)
-
-1. Stellen Sie sicher, dass PHP auf Ihrem Server verfügbar ist
-2. Laden Sie `proxy.php` auf den Server hoch
-3. Öffnen Sie `index.html` über den Server (nicht als `file://`)
-4. Fügen Sie den Google Drive Link ein
-5. Klicken Sie auf "Chat export parsen"
-
-**Hinweis:** Die Google Drive Link-Funktion funktioniert nur mit dem PHP-Proxy (`proxy.php`), da Google Drive CORS-Beschränkungen hat.
-
-## Installation (für PHP-Proxy)
-
-1. Stellen Sie sicher, dass PHP installiert ist
-2. Kopieren Sie `proxy.php` auf Ihren Webserver
-3. Stellen Sie sicher, dass PHP cURL aktiviert ist
+**Keine Installation nötig!** Funktioniert direkt im Browser, offline nach erstem Laden.
 
 ## Unterstützte Formate
 
-- **Text Format** (.txt): `[DD.MM.YYYY, HH:MM:SS] Sender: Message`
-- **HTML Format** (.html): WhatsApp HTML Export
-- **JSON Format** (.json): WhatsApp JSON Export
+- **Text Format** (.txt): WhatsApp Text-Export
+- **HTML Format** (.html): WhatsApp HTML-Export  
+- **JSON Format** (.json): WhatsApp JSON-Export
 
 ## Ausgabe
 
-Das Tool zeigt:
-- **Statistiken**: Anzahl Nachrichten, Sender, Zeitraum
-- **Nachrichten**: Die ersten 100 Nachrichten mit Sender, Zeitstempel und Inhalt
+- **Statistiken**: Nachrichten, Sender, Zeitraum, Regie-Stunden pro Person
+- **Work Log Tabelle**: Alle extrahierten Arbeitseinträge
+- **CSV Export**: Daten exportieren
 
-## Keine Installation nötig (für Datei-Upload)!
+---
 
-- Kein Python
-- Kein Server (für Datei-Upload)
-- Keine Abhängigkeiten
-- Funktioniert offline (nach erstem Laden)
+# Pattern Matching
 
-Einfach die HTML-Datei öffnen und loslegen!
+**All patterns are whitespace-insensitive** - match with any amount/type of whitespace or none.
+
+## Output Fields
+
+| Field | Description |
+|-------|-------------|
+| **Date** | Work date (dd.mm, dd.mm., dd.mm.yy, or dd.mm.yyyy). Falls back to message date if not found |
+| **Start/End** | Work times (HH:MM format) |
+| **Break** | Break duration (HH:MM format) |
+| **Netto** | Calculated: End - Start - Break - Regie-hrs |
+| **Regie-hrs** | Regie hours (HH:MM format, summed if multiple) |
+| **Regie-type** | Type of regie work (comma-separated if multiple) |
+| **Worker** | Sender name |
+| **Log-Text** | Full message text |
+
+## Pattern Examples
+
+| Pattern | Example |
+|---------|---------|
+| **Structured** | `18.11., 08:00, 14:00, break: 30, regie: 90, regie-type: wood` (or `regie-hrs: 90`) |
+| **Date** | `19.11-`, `19.11 /`, `20.11 14:00`, `18.11` (dd.mm, dd.mm., dd.mm.yy, dd.mm.yyyy) |
+| **Time Range** | `08:00-17:00`, `08:00 17:00` |
+| **Break** | `1h lunch`, `45 min lunch`, `45' lunch`, `1/2 hr lunch`, `08:00-17:00 45 min` (no keywords needed) |
+| **Regie** | `30 min regie`, `1/2 hr regie`, `1hr regie` |
+| **Regie Type** | `regie-type: wood` or `30 min regie moving branches` |
+
+## Extraction Rules
+
+**Priority**: Structured format → Date patterns → Time range → Break/Regie patterns
+
+**Break Time**:
+- With keywords: `break`, `lunch`, `pause`, `tea`, `rest` (within 20 chars after duration)
+- After time range: Duration within 20 chars after `08:00-17:00` (no keywords needed)
+- Formats: `1h`, `45 min`, `45'`, `1/2 hr`, `0.75hrs` → converted to HH:MM
+
+**Regie Time**:
+- Requires `regie` keyword within 15 chars after duration
+- Multiple entries are summed
+- Formats: `30 min regie`, `1/2 hr regie`, `1hr regie` → converted to HH:MM
+
+**Regie Type**:
+- Structured: `regie-type: wood`
+- Context-based: Text after `regie` keyword (e.g., `30 min regie moving branches` → "moving branches")
+- Multiple types combined with comma
+
+**Netto Calculation**: `(End - Start) - Break - Regie-hrs`

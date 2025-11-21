@@ -1,0 +1,346 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #f5f5f5;
+    padding: 20px;
+}
+.container {
+    max-width: 100%;
+    margin: 0 auto;
+    background: white;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+h1 {
+    color: #25D366;
+    margin-bottom: 20px;
+}
+.form-group {
+    margin-bottom: 20px;
+}
+label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: #333;
+}
+input[type="text"] {
+    width: 100%;
+    padding: 12px;
+    font-size: 14px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+/* Custom file input styling */
+.file-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+#fileInput {
+    position: absolute;
+    width: 0.1px;
+    height: 0.1px;
+    opacity: 0;
+    overflow: hidden;
+    z-index: -1;
+}
+
+.file-input-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    background: #25D366;
+    color: white;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 14px;
+    transition: all 0.2s ease;
+    border: 2px solid transparent;
+    white-space: nowrap;
+}
+
+.file-input-label:hover {
+    background: #20BA5A;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(37, 211, 102, 0.3);
+}
+
+.file-input-label:active {
+    transform: translateY(0);
+}
+
+.file-input-icon {
+    font-size: 18px;
+}
+
+.file-input-text {
+    user-select: none;
+}
+
+.file-input-filename {
+    color: #666;
+    font-size: 14px;
+    font-style: italic;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-input-filename:not(:empty) {
+    color: #25D366;
+    font-weight: 500;
+    font-style: normal;
+}
+button {
+    padding: 12px 24px;
+    font-size: 16px;
+    background: #25D366;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-block;
+}
+button:hover {
+    background: #20BA5A;
+}
+button:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+}
+.loading {
+    text-align: center;
+    padding: 20px;
+    color: #666;
+    display: none;
+}
+.error {
+    background: #fee;
+    color: #c33;
+    padding: 15px;
+    border-radius: 4px;
+    margin-top: 20px;
+    display: none;
+}
+.results {
+    margin-top: 20px;
+    display: none;
+}
+.statistics {
+    background: #f9f9f9;
+    padding: 15px;
+    border-radius: 4px;
+    margin-bottom: 20px;
+}
+.statistics h3 {
+    margin-bottom: 10px;
+}
+.stat-item {
+    margin: 8px 0;
+}
+.messages-table-wrapper {
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+.messages-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0;
+    table-layout: auto;
+}
+.messages-table thead {
+    background: #f9f9f9;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+.messages-table th {
+    padding: 12px;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid #ddd;
+    vertical-align: top;
+}
+.messages-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #eee;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    vertical-align: top;
+}
+.messages-table tbody tr:hover {
+    background: #f5f5f5;
+}
+.message-highlight {
+    background: #b3d9ff;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-weight: 600;
+    color: #003366;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+.message-highlight-warning {
+    background: #ffcccc;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-weight: 600;
+    color: #cc0000;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+.messages-table col.col-msg-date,
+.messages-table .col-msg-date {
+    width: 1%;
+    white-space: nowrap;
+    color: #666;
+    font-size: 0.9em;
+}
+.messages-table col.col-date,
+.messages-table .col-date {
+    width: 1%;
+    white-space: nowrap;
+}
+.messages-table col.col-time,
+.messages-table .col-time {
+    width: 1%;
+    white-space: nowrap;
+}
+.messages-table col.col-name,
+.messages-table .col-name {
+    width: 100px;
+    max-width: 100px;
+    font-weight: 600;
+    color: #25D366;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+.messages-table col.col-work-date,
+.messages-table .col-work-date {
+    width: 1%;
+    white-space: nowrap;
+}
+.messages-table col.col-start-time,
+.messages-table .col-start-time {
+    width: 1%;
+    white-space: nowrap;
+}
+.messages-table col.col-end-time,
+.messages-table .col-end-time {
+    width: 1%;
+    white-space: nowrap;
+}
+.messages-table col.col-break,
+.messages-table .col-break {
+    width: 1%;
+    white-space: nowrap;
+}
+.messages-table col.col-netto,
+.messages-table .col-netto {
+    width: 1%;
+    white-space: nowrap;
+    font-weight: 600;
+}
+.messages-table col.col-regie,
+.messages-table .col-regie {
+    width: 1%;
+    white-space: nowrap;
+}
+.messages-table col.col-regie-type,
+.messages-table .col-regie-type {
+    max-width: 100px;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+.messages-table col.col-message,
+.messages-table .col-message {
+    width: auto;
+    min-width: 150px;
+}
+#summaryTables {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    margin-bottom: 30px;
+}
+.summary-section {
+    flex: 0 0 auto;
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border: 1px solid #ddd;
+}
+.summary-section h3 {
+    margin-bottom: 15px;
+    color: #25D366;
+    font-size: 1.3em;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #25D366;
+}
+.summary-table {
+    width: auto;
+    border-collapse: collapse;
+    border: 1px solid #ddd;
+}
+.summary-table th {
+    background: #f9f9f9;
+    font-weight: 600;
+    border: 1px solid #ddd;
+    border-bottom: 2px solid #25D366;
+}
+.summary-table td, .summary-table th {
+    border: 1px solid #ddd;
+    padding: 10px 12px;
+}
+.summary-table tbody tr:hover {
+    background: #f5f5f5;
+}
+.summary-table tbody tr:last-child td {
+    border-bottom: 1px solid #ddd;
+}
+.pill {
+    display: inline-block;
+    padding: 4px 10px;
+    margin: 2px 4px 2px 0;
+    background: #e3f2fd;
+    color: #1976d2;
+    border-radius: 12px;
+    font-size: 0.85em;
+    border: 1px solid #90caf9;
+}
+
+/* Editable table cells */
+.messages-table td[contenteditable="true"] {
+    cursor: text;
+    min-height: 1.2em;
+}
+
+.messages-table td[contenteditable="true"]:focus {
+    background-color: #e6f2ff;
+    outline: 2px solid #0066cc;
+    border-radius: 2px;
+}
+
+.messages-table td[contenteditable="true"]:hover:not(:focus) {
+    background-color: #f0f8ff;
+}
+
+/* Editable numbers - blue color */
+.messages-table .editable-number {
+    color: #0066cc;
+    font-weight: 500;
+}
+

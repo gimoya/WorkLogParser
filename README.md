@@ -1,26 +1,26 @@
 # WhatsApp Chat Parser
 
-Tool zum Parsen von WhatsApp Chat-Exports und Extrahieren von Arbeitszeiten.
+Tool for parsing WhatsApp chat exports and extracting work hours.
 
-## Verwendung
+## Usage
 
-1. Öffne `index.html` im Browser
-2. Wähle eine ZIP-Datei mit WhatsApp-Chat-Export (.txt Dateien)
-3. Klicke auf "Chat export parsen"
+1. Open `index.html` in your browser
+2. Select a ZIP file with WhatsApp chat export (.txt files)
+3. Click "Parse chat export"
 
-**Keine Installation nötig!** Funktioniert direkt im Browser, offline nach erstem Laden.
+**No installation required!** Works directly in the browser, offline after first load.
 
-## Unterstützte Formate
+## Supported Formats
 
-- **Text Format** (.txt): WhatsApp Text-Export
-- **HTML Format** (.html): WhatsApp HTML-Export  
-- **JSON Format** (.json): WhatsApp JSON-Export
+- **Text Format** (.txt): WhatsApp text export
+- **HTML Format** (.html): WhatsApp HTML export  
+- **JSON Format** (.json): WhatsApp JSON export
 
-## Ausgabe
+## Output
 
-- **Statistiken**: Nachrichten, Sender, Zeitraum, Regie-Stunden pro Person
-- **Work Log Tabelle**: Alle extrahierten Arbeitseinträge
-- **CSV Export**: Daten exportieren
+- **Statistics**: Messages, senders, date range, regie hours per person
+- **Work Log Table**: All extracted work entries
+- **CSV Export**: Export data
 
 ---
 
@@ -71,4 +71,4 @@ Tool zum Parsen von WhatsApp Chat-Exports und Extrahieren von Arbeitszeiten.
 - Context-based: Text after `regie` keyword (e.g., `30 min regie moving branches` → "moving branches")
 - Multiple types combined with comma
 
-**Netto Calculation**: `(End - Start) - Break - Regie-hrs`
+**Netto Calculation**: `(End - Start) - Break`

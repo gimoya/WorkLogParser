@@ -1260,7 +1260,7 @@ async function parseUploadedFile(file) {
     }
     
     if (Object.keys(files).length === 0) {
-        throw new Error('Keine Dateien gefunden');
+        throw new Error('No files found');
     }
     
     // Parse all files
@@ -1534,13 +1534,13 @@ function updateStatsFromDOM() {
 function exportToCSV() {
     const table = document.getElementById('messagesTable');
     if (!table) {
-        alert('Keine Tabelle zum Exportieren vorhanden.');
+        alert('No table available for export.');
         return;
     }
     
     const rows = table.querySelectorAll('tbody tr');
     if (rows.length === 0) {
-        alert('Keine Daten zum Exportieren vorhanden.');
+        alert('No data available for export.');
         return;
     }
     
@@ -1639,19 +1639,26 @@ function parseDateToComparable(dateStr) {
     return null;
 }
 
-// Filter messages by date range
-function filterMessagesByDate(messages, fromDate, toDate) {
-    if (!fromDate && !toDate) return messages;
-    
+// Filter messages by date range and worker
+function filterMessages(messages, fromDate, toDate, worker) {
     return messages.filter(msg => {
-        const msgDate = msg.workDate && msg.workDate !== 'N/A' ? msg.workDate : msg.date;
-        if (!msgDate) return false;
+        // Filter by date
+        if (fromDate || toDate) {
+            const msgDate = msg.workDate && msg.workDate !== 'N/A' ? msg.workDate : msg.date;
+            if (!msgDate) return false;
+            
+            const comparableDate = parseDateToComparable(formatDateToDDMMYYYY(msgDate));
+            if (!comparableDate) return false;
+            
+            if (fromDate && comparableDate < fromDate) return false;
+            if (toDate && comparableDate > toDate) return false;
+        }
         
-        const comparableDate = parseDateToComparable(formatDateToDDMMYYYY(msgDate));
-        if (!comparableDate) return false;
-        
-        if (fromDate && comparableDate < fromDate) return false;
-        if (toDate && comparableDate > toDate) return false;
+        // Filter by worker
+        if (worker && worker !== '') {
+            const msgWorker = msg.sender || 'Unknown';
+            if (msgWorker !== worker) return false;
+        }
         
         return true;
     });
@@ -1674,17 +1681,19 @@ function findEarliestDate(messages) {
     return earliest;
 }
 
-// Apply date filter and refresh display
-function applyDateFilter() {
+// Apply filters (date and worker) and refresh display
+function applyFilters() {
     const fromDateInput = document.getElementById('fromDate');
     const toDateInput = document.getElementById('toDate');
+    const workerFilter = document.getElementById('workerFilter');
     
     if (!fromDateInput || !toDateInput || allParsedMessages.length === 0) return;
     
     const fromDate = fromDateInput.value || null;
     const toDate = toDateInput.value || null;
+    const worker = workerFilter ? workerFilter.value || null : null;
     
-    const filteredMessages = filterMessagesByDate(allParsedMessages, fromDate, toDate);
+    const filteredMessages = filterMessages(allParsedMessages, fromDate, toDate, worker);
     
     // Re-display filtered messages
     displayFilteredMessages(filteredMessages);
@@ -1701,18 +1710,18 @@ function displayFilteredMessages(messages) {
     const stats = analyzeMessages(messages);
     const allStats = analyzeMessages(allParsedMessages);
     statistics.innerHTML = `
-        <h3>Statistiken</h3>
-        <div class="stat-item"><strong>Gesamt Nachrichten:</strong> ${allStats.total_messages || 0}</div>
-        <div class="stat-item"><strong>Gefilterte Nachrichten:</strong> ${messages.length} von ${allParsedMessages.length}</div>
+        <h3>Statistics</h3>
+        <div class="stat-item"><strong>Total Messages:</strong> ${allStats.total_messages || 0}</div>
+        <div class="stat-item"><strong>Filtered Messages:</strong> ${messages.length} of ${allParsedMessages.length}</div>
         ${stats.date_range && stats.date_range.first ? `
-            <div class="stat-item"><strong>Zeitraum (gefiltert):</strong> ${stats.date_range.first} bis ${stats.date_range.last || stats.date_range.first}</div>
+            <div class="stat-item"><strong>Date Range (filtered):</strong> ${stats.date_range.first} to ${stats.date_range.last || stats.date_range.first}</div>
         ` : ''}
-        <div class="stat-item"><strong>Nachrichten pro Person (gefiltert):</strong>
+        <div class="stat-item"><strong>Messages per Person (filtered):</strong>
             <ul>
                 ${stats.senders && Object.keys(stats.senders).length > 0 ? 
                     Object.entries(stats.senders).map(([sender, count]) => 
                         `<li>${sender}: ${count}</li>`
-                    ).join('') : '<li>Keine Sender gefunden</li>'
+                    ).join('') : '<li>No senders found</li>'
                 }
             </ul>
         </div>
@@ -1853,6 +1862,29 @@ function displayFilteredMessages(messages) {
                     const endTime = field === 'endTime' ? updatedValue : (endCell?.textContent || '').trim().replace(/N\/A/gi, '').replace(/<[^>]*>/g, '');
                     const breakTime = field === 'breakTime' ? updatedValue : (breakCell?.textContent || '').trim().replace(/N\/A/gi, '').replace(/<[^>]*>/g, '');
                     
+                    // Validate: break < (end time - start time) duration
+                    if (startTime && endTime) {
+                        const startMinutes = parseTimeToMinutes(startTime);
+                        const endMinutes = parseTimeToMinutes(endTime);
+                        const breakMinutes = parseTimeToMinutes(breakTime) || 0;
+                        
+                        if (startMinutes && endMinutes) {
+                            let totalMinutes = endMinutes - startMinutes;
+                            if (totalMinutes < 0) {
+                                totalMinutes += 24 * 60; // Overnight shift
+                            }
+                            
+                            // Break time must be less than the total duration (end - start)
+                            if (breakMinutes >= totalMinutes) {
+                                const totalDuration = minutesToHHMM(totalMinutes);
+                                alert(`Invalid break time: Break time (${breakTime || '00:00'}) must be less than the work duration (${totalDuration}).\nStart: ${startTime}, End: ${endTime}, Duration: ${totalDuration}`);
+                                this.textContent = '';
+                                this.focus();
+                                return;
+                            }
+                        }
+                    }
+                    
                     const netto = calculateNettoTime(startTime, endTime, breakTime, '');
                     nettoCell.textContent = netto || '';
                 }
@@ -1905,7 +1937,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e.target.files && e.target.files.length > 0) {
                 fileName.textContent = e.target.files[0].name;
             } else {
-                fileName.textContent = 'Keine Datei ausgewählt';
+                fileName.textContent = 'No file selected';
             }
         });
     }
@@ -1936,7 +1968,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Check if file is uploaded
             if (!fileInput.files || fileInput.files.length === 0) {
-                error.textContent = 'Bitte wählen Sie eine Datei aus.';
+                error.textContent = 'Please select a file.';
                 error.style.display = 'block';
                 parseBtn.disabled = false;
                 loading.style.display = 'none';
@@ -1972,8 +2004,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     dateFilter.style.display = 'block';
                 }
                 
+                // Populate worker filter dropdown
+                const workerFilter = document.getElementById('workerFilter');
+                if (workerFilter && allParsedMessages.length > 0) {
+                    // Get unique worker names
+                    const uniqueWorkers = [...new Set(allParsedMessages.map(msg => msg.sender || 'Unknown').filter(s => s))].sort();
+                    uniqueWorkers.forEach(worker => {
+                        const option = document.createElement('option');
+                        option.value = worker;
+                        option.textContent = worker;
+                        workerFilter.appendChild(option);
+                    });
+                }
+                
                 // Apply initial filter and display
-                applyDateFilter();
+                applyFilters();
 
                 results.style.display = 'block';
                 
@@ -1986,12 +2031,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     exportBtn.onclick = () => exportToCSV();
                 }
                 
-                // Add event listeners to date filter inputs (reuse variables from above)
+                // Add event listeners to filter inputs (reuse variables from above)
                 if (fromDateInput) {
-                    fromDateInput.addEventListener('change', applyDateFilter);
+                    fromDateInput.addEventListener('change', applyFilters);
                 }
                 if (toDateInput) {
-                    toDateInput.addEventListener('change', applyDateFilter);
+                    toDateInput.addEventListener('change', applyFilters);
+                }
+                if (workerFilter) {
+                    workerFilter.addEventListener('change', applyFilters);
                 }
                 
                 // Setup goto date functionality
@@ -2013,11 +2061,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     gotoDateBtn.addEventListener('click', scrollToDate);
                 }
             } else {
-                error.textContent = 'Unbekannter Fehler beim Parsen.';
+                error.textContent = 'Unknown error while parsing.';
                 error.style.display = 'block';
             }
         } catch (err) {
-            error.textContent = 'Fehler: ' + err.message;
+            error.textContent = 'Error: ' + err.message;
             error.style.display = 'block';
             console.error('Parse error:', err);
         } finally {

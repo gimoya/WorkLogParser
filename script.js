@@ -752,26 +752,6 @@ function highlightMessage(message, workEntries) {
                 addMatches(entry.regieType, `\\b${entry.regieType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
             }
             
-            // Check if regie time is empty but regie type keywords are found - mark in light red
-            if (!entry.regieTime?.trim() && !entry.regieType?.trim()) {
-                const regieTypeKeywordsGlobal = new RegExp(REGIE_TYPE_KEYWORDS.source, 'gi');
-                const regieKeywordMatches = [...message.matchAll(regieTypeKeywordsGlobal)];
-                for (const regieMatch of regieKeywordMatches) {
-                    // Check if this keyword is not already part of a highlighted range
-                    const alreadyHighlighted = highlightRanges.some(r => 
-                        regieMatch.index >= r.start && regieMatch.index < r.end
-                    );
-                    if (!alreadyHighlighted) {
-                        highlightRanges.push({ 
-                            start: regieMatch.index, 
-                            end: regieMatch.index + regieMatch[0].length, 
-                            text: regieMatch[0],
-                            warning: true // Mark as warning highlight
-                        });
-                    }
-                }
-            }
-            
             // Highlight additional dates found after first extracted date
             if (entry.additionalDates && entry.additionalDates.length > 0) {
                 entry.additionalDates.forEach(additionalDate => {
@@ -782,6 +762,27 @@ function highlightMessage(message, workEntries) {
                         warning: true
                     });
                 });
+            }
+        }
+        
+        // Check if regie time is empty but regie type keywords are found - mark in light red
+        // This should run regardless of whether structured format matched (e.g., if regie wasn't extracted from structured format)
+        if (!entry.regieTime?.trim() && !entry.regieType?.trim()) {
+            const regieTypeKeywordsGlobal = new RegExp(REGIE_TYPE_KEYWORDS.source, 'gi');
+            const regieKeywordMatches = [...message.matchAll(regieTypeKeywordsGlobal)];
+            for (const regieMatch of regieKeywordMatches) {
+                // Check if this keyword is not already part of a highlighted range
+                const alreadyHighlighted = highlightRanges.some(r => 
+                    regieMatch.index >= r.start && regieMatch.index < r.end
+                );
+                if (!alreadyHighlighted) {
+                    highlightRanges.push({ 
+                        start: regieMatch.index, 
+                        end: regieMatch.index + regieMatch[0].length, 
+                        text: regieMatch[0],
+                        warning: true // Mark as warning highlight
+                    });
+                }
             }
         }
     });
@@ -840,9 +841,10 @@ function extractWorkInfo(message, logCallback = null) {
     
     // FIRST: Try structured format: "18.11., 08:00, 14:00, break: 30, regie: 90, regie-type: wood, Work Description"
     // Format: dd.mm., H:MM or HH:MM, H:MM or HH:MM, break: MM, regie: MM (or regie-hrs: MM), regie-type: text, description
-    // Whitespace-insensitive: matches with any amount/type of whitespace or none
-    // Structured pattern - allow newlines in whitespace, make comma optional before regie (can be on new line)
-    const structuredPattern = /(\d{2}\.\d{2}\.)[\s\n]*,\s*(\d{1,2}:\d{2})[\s\n]*,\s*(\d{1,2}:\d{2})(?:[\s\n]*,?\s*break\s*:\s*(\d+))?(?:[\s\n]*,?\s*regie(?:\s*-\s*hrs)?\s*:\s*(\d+))?(?:[\s\n]*,?\s*regie\s*-\s*type\s*:\s*([^,\n]+))?(?:[\s\n]*,?\s*([\s\S]+))?/i;
+    // Whitespace-insensitive: matches with any amount/type of whitespace (including newlines) or none
+    // Structured pattern - allow newlines and any whitespace everywhere, make commas optional
+    // Use [\s\n]* everywhere instead of \s* to allow newlines, and make commas optional
+    const structuredPattern = /(\d{2}\.\d{2}\.)[\s\n]*(?:,|[\s\n]+)[\s\n]*(\d{1,2}:\d{2})[\s\n]*(?:,|[\s\n]+)[\s\n]*(\d{1,2}:\d{2})(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*break[\s\n]*:[\s\n]*(\d+))?(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*regie(?:\s*-\s*hrs)?[\s\n]*:[\s\n]*(\d+))?(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*regie[\s\n]*-\s*type[\s\n]*:[\s\n]*([^,\n]+))?(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*([\s\S]+))?/i;
     const structuredMatch = message.match(structuredPattern);
     
     if (structuredMatch) {

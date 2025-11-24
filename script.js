@@ -508,7 +508,7 @@ function createMessageEntry(dateStr, timeStr, sender, message, workInfo, date) {
         time: timeStr,
         sender: sender.trim(),
         message: message.trim(),
-        workDate: workInfo.workDate || dateStr,
+        workDate: workInfo.workDate ? formatDateToDDMMYYYY(workInfo.workDate) : formatDateToDDMMYYYY(dateStr),
         startTime: workInfo.startTime,
         endTime: workInfo.endTime,
         timeRangeOriginalText: workInfo.timeRangeOriginalText || '',
@@ -519,7 +519,9 @@ function createMessageEntry(dateStr, timeStr, sender, message, workInfo, date) {
         regieType: workInfo.regieType || '',
         regieOriginalText: workInfo.regieOriginalText || '',
         additionalDates: workInfo.additionalDates || [],
-        structuredFormatMatch: workInfo.structuredFormatMatch || null
+        structuredFormatMatch: workInfo.structuredFormatMatch || null,
+        dateOriginalText: workInfo.dateOriginalText || null,
+        dateMatchIndex: workInfo.dateMatchIndex !== undefined ? workInfo.dateMatchIndex : null
     };
 }
 
@@ -625,48 +627,53 @@ function highlightMessage(message, workEntries) {
     
     const highlightRanges = [];
     
-    // Find all date matches in message
-    const dateMatches = [];
-    DATE_PATTERN_ALL.lastIndex = 0;
-    let allDateMatch;
-    while ((allDateMatch = DATE_PATTERN_ALL.exec(message)) !== null) {
-        const dateStr = allDateMatch[1].replace(/\.$/, '');
-        const dateIndex = allDateMatch.index;
-        // Avoid duplicates (same position)
-        const alreadyFound = dateMatches.some(dm => Math.abs(dm.index - dateIndex) < 3);
-        if (!alreadyFound) {
-            dateMatches.push({
-                date: dateStr,
-                index: dateIndex,
-                fullMatch: allDateMatch[0]
-            });
-        }
-    }
-    dateMatches.sort((a, b) => a.index - b.index);
+    // Check if any entry has structured format match - if so, skip date matching logic
+    const hasStructuredFormat = workEntries.some(entry => entry.structuredFormatMatch);
     
-    // If we have multiple dates, mark second and subsequent dates as warnings
-    if (dateMatches.length > 1) {
-        // Get the first extracted date from work entry
-        const firstExtractedDate = workEntries[0]?.workDate;
-        
-        // Find which date match corresponds to the first extracted date
-        let firstDateMatchIndex = 0;
-        if (firstExtractedDate) {
-            const foundIndex = dateMatches.findIndex(dm => dm.date === firstExtractedDate);
-            if (foundIndex >= 0) {
-                firstDateMatchIndex = foundIndex;
+    // Find all date matches in message (only if no structured format match)
+    if (!hasStructuredFormat) {
+        const dateMatches = [];
+        DATE_PATTERN_ALL.lastIndex = 0;
+        let allDateMatch;
+        while ((allDateMatch = DATE_PATTERN_ALL.exec(message)) !== null) {
+            const dateStr = allDateMatch[1].replace(/\.$/, '');
+            const dateIndex = allDateMatch.index;
+            // Avoid duplicates (same position)
+            const alreadyFound = dateMatches.some(dm => Math.abs(dm.index - dateIndex) < 3);
+            if (!alreadyFound) {
+                dateMatches.push({
+                    date: dateStr,
+                    index: dateIndex,
+                    fullMatch: allDateMatch[0]
+                });
             }
         }
+        dateMatches.sort((a, b) => a.index - b.index);
         
-        // Mark all dates after the first one as warnings (red highlight)
-        for (let i = firstDateMatchIndex + 1; i < dateMatches.length; i++) {
-            const dm = dateMatches[i];
-            highlightRanges.push({
-                start: dm.index,
-                end: dm.index + dm.fullMatch.length,
-                text: dm.fullMatch,
-                warning: true
-            });
+        // If we have multiple dates, mark second and subsequent dates as warnings
+        if (dateMatches.length > 1) {
+            // Get the first extracted date from work entry
+            const firstExtractedDate = workEntries[0]?.workDate;
+            
+            // Find which date match corresponds to the first extracted date
+            let firstDateMatchIndex = 0;
+            if (firstExtractedDate) {
+                const foundIndex = dateMatches.findIndex(dm => dm.date === firstExtractedDate);
+                if (foundIndex >= 0) {
+                    firstDateMatchIndex = foundIndex;
+                }
+            }
+            
+            // Mark all dates after the first one as warnings (red highlight)
+            for (let i = firstDateMatchIndex + 1; i < dateMatches.length; i++) {
+                const dm = dateMatches[i];
+                highlightRanges.push({
+                    start: dm.index,
+                    end: dm.index + dm.fullMatch.length,
+                    text: dm.fullMatch,
+                    warning: true
+                });
+            }
         }
     }
     const addMatches = (text, pattern) => {
@@ -679,111 +686,133 @@ function highlightMessage(message, workEntries) {
     };
     
     workEntries.forEach(entry => {
-        // If structured format was matched, highlight the entire structured pattern first
+        // If structured format was matched, highlight the entire structured pattern (literal match)
         if (entry.structuredFormatMatch) {
             const sf = entry.structuredFormatMatch;
             highlightRanges.push({
                 start: sf.index,
                 end: sf.index + sf.fullText.length,
-                text: sf.fullText
+                text: sf.fullText,
+                isStructured: true // Mark as structured format match for priority
             });
-        }
-        
-        if (entry.workDate?.trim()) {
-            addMatches(entry.workDate, `\\b${entry.workDate.replace(/\./g, '\\.')}\\b`);
-        }
-        // If we have a time range original text, highlight only that (to avoid matching other occurrences)
-        if (entry.timeRangeOriginalText?.trim()) {
-            const escapedRange = entry.timeRangeOriginalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            addMatches(entry.timeRangeOriginalText, escapedRange);
+            // Skip all individual highlights - they're already part of the fullText literal match
         } else {
-            // Fallback: highlight individual times (but this might match multiple occurrences)
-            if (entry.startTime?.trim()) {
-                const escapedTime = entry.startTime.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                addMatches(entry.startTime, escapedTime);
-            }
-            if (entry.endTime?.trim()) {
-                const escapedTime = entry.endTime.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                addMatches(entry.endTime, escapedTime);
-            }
-        }
-        if (entry.breakTime?.trim()) {
-            // Use original text pattern if available (e.g., "1h", "45'", "1/2 hr")
-            if (entry.breakOriginalText?.trim()) {
-                const escapedText = entry.breakOriginalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                // Make whitespace flexible for matching
-                addMatches(entry.breakOriginalText, escapedText.replace(/\s+/g, '\\s+'));
-            } else {
-                // Fallback: try to match formatted time (less reliable)
-                const breakMatch = entry.breakTime.match(/(\d+(?:\/\d+)?(?:\.\d+)?)\s*(?:hr|hrs|h|min|'|minute|minuten)?/i);
-                if (breakMatch) {
-                    addMatches(breakMatch[0], `\\b${breakMatch[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
-                }
-            }
-        }
-        if (entry.regieTime?.trim()) {
-            if (entry.regieOriginalText?.trim()) {
-                entry.regieOriginalText.split('|').forEach(originalText => {
-                    addMatches(originalText, originalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'));
-                });
-            } else {
-                addMatches(entry.regieTime, `\\b${entry.regieTime.replace(':', '\\:')}\\b`);
-            }
-        }
-        if (entry.regieType?.trim()) {
-            addMatches(entry.regieType, `\\b${entry.regieType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
-        }
-        
-        // Check if regie time is empty but regie type keywords are found - mark in light red
-        if (!entry.regieTime?.trim() && !entry.regieType?.trim()) {
-            const regieTypeKeywordsGlobal = new RegExp(REGIE_TYPE_KEYWORDS.source, 'gi');
-            const regieKeywordMatches = [...message.matchAll(regieTypeKeywordsGlobal)];
-            for (const regieMatch of regieKeywordMatches) {
-                // Check if this keyword is not already part of a highlighted range
-                const alreadyHighlighted = highlightRanges.some(r => 
-                    regieMatch.index >= r.start && regieMatch.index < r.end
-                );
-                if (!alreadyHighlighted) {
-                    highlightRanges.push({ 
-                        start: regieMatch.index, 
-                        end: regieMatch.index + regieMatch[0].length, 
-                        text: regieMatch[0],
-                        warning: true // Mark as warning highlight
-                    });
-                }
-            }
-        }
-        
-        // Check 2: Highlight additional dates found after first extracted date
-        if (entry.additionalDates && entry.additionalDates.length > 0) {
-            entry.additionalDates.forEach(additionalDate => {
+            // Only do individual highlights if structured format wasn't matched
+            // Highlight date - use original match if available, otherwise search for normalized date
+            if (entry.dateOriginalText && entry.dateMatchIndex !== null) {
+                // Use the original date match for precise highlighting
                 highlightRanges.push({
-                    start: additionalDate.index,
-                    end: additionalDate.index + additionalDate.fullMatch.length,
-                    text: additionalDate.fullMatch,
-                    warning: true
+                    start: entry.dateMatchIndex,
+                    end: entry.dateMatchIndex + entry.dateOriginalText.length,
+                    text: entry.dateOriginalText
                 });
-            });
+            } else if (entry.workDate?.trim()) {
+                // Fallback: search for normalized date
+                addMatches(entry.workDate, `\\b${entry.workDate.replace(/\./g, '\\.')}\\b`);
+            }
+            // If we have a time range original text, highlight only that (to avoid matching other occurrences)
+            if (entry.timeRangeOriginalText?.trim()) {
+                const escapedRange = entry.timeRangeOriginalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                addMatches(entry.timeRangeOriginalText, escapedRange);
+            } else {
+                // Fallback: highlight individual times (but this might match multiple occurrences)
+                if (entry.startTime?.trim()) {
+                    const escapedTime = entry.startTime.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    addMatches(entry.startTime, escapedTime);
+                }
+                if (entry.endTime?.trim()) {
+                    const escapedTime = entry.endTime.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    addMatches(entry.endTime, escapedTime);
+                }
+            }
+            if (entry.breakTime?.trim()) {
+                // Use original text pattern if available (e.g., "1h", "45'", "1/2 hr")
+                if (entry.breakOriginalText?.trim()) {
+                    const escapedText = entry.breakOriginalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    // Make whitespace flexible for matching
+                    addMatches(entry.breakOriginalText, escapedText.replace(/\s+/g, '\\s+'));
+                } else {
+                    // Fallback: try to match formatted time (less reliable)
+                    const breakMatch = entry.breakTime.match(/(\d+(?:\/\d+)?(?:\.\d+)?)\s*(?:hr|hrs|h|min|'|minute|minuten)?/i);
+                    if (breakMatch) {
+                        addMatches(breakMatch[0], `\\b${breakMatch[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+                    }
+                }
+            }
+            if (entry.regieTime?.trim()) {
+                if (entry.regieOriginalText?.trim()) {
+                    entry.regieOriginalText.split('|').forEach(originalText => {
+                        addMatches(originalText, originalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'));
+                    });
+                } else {
+                    addMatches(entry.regieTime, `\\b${entry.regieTime.replace(':', '\\:')}\\b`);
+                }
+            }
+            if (entry.regieType?.trim()) {
+                addMatches(entry.regieType, `\\b${entry.regieType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+            }
+            
+            // Check if regie time is empty but regie type keywords are found - mark in light red
+            if (!entry.regieTime?.trim() && !entry.regieType?.trim()) {
+                const regieTypeKeywordsGlobal = new RegExp(REGIE_TYPE_KEYWORDS.source, 'gi');
+                const regieKeywordMatches = [...message.matchAll(regieTypeKeywordsGlobal)];
+                for (const regieMatch of regieKeywordMatches) {
+                    // Check if this keyword is not already part of a highlighted range
+                    const alreadyHighlighted = highlightRanges.some(r => 
+                        regieMatch.index >= r.start && regieMatch.index < r.end
+                    );
+                    if (!alreadyHighlighted) {
+                        highlightRanges.push({ 
+                            start: regieMatch.index, 
+                            end: regieMatch.index + regieMatch[0].length, 
+                            text: regieMatch[0],
+                            warning: true // Mark as warning highlight
+                        });
+                    }
+                }
+            }
+            
+            // Highlight additional dates found after first extracted date
+            if (entry.additionalDates && entry.additionalDates.length > 0) {
+                entry.additionalDates.forEach(additionalDate => {
+                    highlightRanges.push({
+                        start: additionalDate.index,
+                        end: additionalDate.index + additionalDate.fullMatch.length,
+                        text: additionalDate.fullMatch,
+                        warning: true
+                    });
+                });
+            }
         }
     });
     
     // Sort ranges by start position (descending) to apply from end to start
     highlightRanges.sort((a, b) => b.start - a.start);
     
-    // Remove overlapping ranges (prioritize warnings)
-    // Sort by warning first (warnings last so they override), then by start position
+    // Remove overlapping ranges (prioritize structured format matches and warnings)
+    // Sort: structured format matches first (keep them), then warnings last (they override), then by start position
     highlightRanges.sort((a, b) => {
-        if (a.warning !== b.warning) return a.warning ? 1 : -1;
+        const aIsStructured = a.isStructured || false;
+        const bIsStructured = b.isStructured || false;
+        if (aIsStructured !== bIsStructured) return aIsStructured ? -1 : 1; // Structured format first
+        if (a.warning !== b.warning) return a.warning ? 1 : -1; // Warnings last
         return a.start - b.start;
     });
     
     const nonOverlapping = [];
     for (const range of highlightRanges) {
-        const overlaps = nonOverlapping.some(r => 
-            (range.start >= r.start && range.start < r.end) ||
-            (range.end > r.start && range.end <= r.end) ||
-            (range.start <= r.start && range.end >= r.end)
-        );
+        // If this is a structured format match, check if it's completely contained in an existing range
+        // Otherwise, check for any overlap
+        const overlaps = nonOverlapping.some(r => {
+            if (range.isStructured) {
+                // For structured format, only remove if completely contained in another structured format
+                return r.isStructured && range.start >= r.start && range.end <= r.end;
+            }
+            // For other ranges, check normal overlap
+            return (range.start >= r.start && range.start < r.end) ||
+                   (range.end > r.start && range.end <= r.end) ||
+                   (range.start <= r.start && range.end >= r.end);
+        });
         if (!overlaps) nonOverlapping.push(range);
     }
     
@@ -821,11 +850,28 @@ function extractWorkInfo(message, logCallback = null) {
         log(`    Groups: date=${structuredMatch[1]}, start=${structuredMatch[2]}, end=${structuredMatch[3]}, break=${structuredMatch[4]}, regie=${structuredMatch[5]}, regie-type=${structuredMatch[6]}`);
         
         // Store the full structured match for highlighting
-        const fullMatch = structuredMatch[0];
         const matchStartIndex = structuredMatch.index;
+        // structuredMatch[0] may include optional description text (group 7)
+        // We need to extract only the pattern part, stopping before the description
+        let fullMatch = structuredMatch[0];
+        
+        // If group 7 (description) exists, the pattern ends before it
+        // Find the position where description starts in the full match
+        if (structuredMatch[7]) {
+            const descInFullMatch = fullMatch.lastIndexOf(structuredMatch[7]);
+            if (descInFullMatch > 0) {
+                // Pattern ends just before description - trim trailing whitespace and comma
+                fullMatch = fullMatch.substring(0, descInFullMatch).trimEnd();
+                // Remove trailing comma if present
+                if (fullMatch.endsWith(',')) {
+                    fullMatch = fullMatch.slice(0, -1).trimEnd();
+                }
+            }
+        }
         
         // Fill entry with structured format data
-        entry.workDate = structuredMatch[1].replace(/\.$/, ''); // Remove trailing dot
+        const rawDate = structuredMatch[1].replace(/\.$/, ''); // Remove trailing dot
+        entry.workDate = formatDateToDDMMYYYY(rawDate); // Normalize date format
         const rawStart = structuredMatch[2];
         const rawEnd = structuredMatch[3];
         entry.startTime = normalizeTime(rawStart); // Normalize to HH:MM
@@ -833,32 +879,20 @@ function extractWorkInfo(message, logCallback = null) {
         log(`    Raw times: start="${rawStart}", end="${rawEnd}"`);
         log(`    Normalized times: start="${entry.startTime}", end="${entry.endTime}"`);
         
-        // Store original time range text for highlighting - extract from the actual matched text
-        // The structured format has times separated by comma: "12:00, 17:00"
-        const timeRangeInMatch = fullMatch.match(/(\d{1,2}:\d{2})\s*,\s*(\d{1,2}:\d{2})/);
-        if (timeRangeInMatch) {
-            entry.timeRangeOriginalText = timeRangeInMatch[0]; // e.g., "12:00, 17:00"
-        } else {
-            // Fallback: construct with dash if comma pattern not found
-            entry.timeRangeOriginalText = `${rawStart}-${rawEnd}`;
-        }
+        // Don't store timeRangeOriginalText or breakOriginalText for structured format
+        // The entire fullMatch will be highlighted as one block
+        // Clear any existing values to prevent individual highlighting
+        entry.timeRangeOriginalText = '';
+        entry.breakOriginalText = '';
         
         if (structuredMatch[4]) {
             entry.breakTime = minutesToHHMM(parseInt(structuredMatch[4]));
-            // Extract actual "break: 60" text from fullMatch
-            const breakMatch = fullMatch.match(/break\s*:\s*\d+/i);
-            if (breakMatch) {
-                entry.breakOriginalText = breakMatch[0];
-            }
             log(`    Extracted break: ${entry.breakTime}`);
         }
         if (structuredMatch[5]) {
             entry.regieTime = minutesToHHMM(parseInt(structuredMatch[5]));
-            // Extract actual "regie: 30" or "regie-hrs: 30" text from fullMatch
-            const regieMatch = fullMatch.match(/regie(?:\s*-\s*hrs)?\s*:\s*\d+/i);
-            if (regieMatch) {
-                entry.regieOriginalText = regieMatch[0];
-            }
+            // Don't store regieOriginalText for structured format - fullMatch will be highlighted
+            entry.regieOriginalText = '';
             log(`    Extracted regie: ${entry.regieTime}`);
         }
         if (structuredMatch[6]) {
@@ -870,6 +904,8 @@ function extractWorkInfo(message, logCallback = null) {
         log(`    Calculated netto: ${entry.nettoTime}`);
         
         // Store structured format match info for highlighting the entire pattern
+        // Log the fullMatch to verify it's capturing everything including the date
+        log(`    Full match captured: "${fullMatch}" (length: ${fullMatch.length}, index: ${matchStartIndex})`);
         entry.structuredFormatMatch = {
             fullText: fullMatch,
             index: matchStartIndex
@@ -914,7 +950,14 @@ function extractWorkInfo(message, logCallback = null) {
         
         // Fill empty fields only
         if (!entry.workDate) {
-            entry.workDate = dateInfo.date;
+            entry.workDate = formatDateToDDMMYYYY(dateInfo.date); // Normalize date format
+            // Store original date match for highlighting
+            // Find the full match text at the date index
+            const dateMatchAtPos = message.substring(dateInfo.index).match(/^\d{2}\.\d{2}(?:\.\d{2,4})?\.?/);
+            if (dateMatchAtPos) {
+                entry.dateOriginalText = dateMatchAtPos[0];
+                entry.dateMatchIndex = dateInfo.index;
+            }
         }
         
         // Extract times if not already set
@@ -1808,9 +1851,15 @@ function displayFilteredMessages(messages) {
             regieTime: msg.regieTime,
             regieType: msg.regieType,
             regieOriginalText: msg.regieOriginalText || '',
-            additionalDates: msg.additionalDates || []
+            additionalDates: msg.additionalDates || [],
+            structuredFormatMatch: msg.structuredFormatMatch || null,
+            dateOriginalText: msg.dateOriginalText || null,
+            dateMatchIndex: msg.dateMatchIndex !== undefined ? msg.dateMatchIndex : null
         });
     });
+    
+    // Track seen work date + person combinations to identify duplicates
+    const seenDatePersonCombos = new Set();
     
     const tableRows = messages.map((msg, index) => {
         // Find entries for this message
@@ -1822,9 +1871,21 @@ function displayFilteredMessages(messages) {
         );
         const highlightedMessage = hasExtractedData ? highlightMessage(msg.message, group.entries) : msg.message;
         
-        const isUnmatched = msg.unmatched || !msg.startTime || !msg.endTime;
         const msgDateValue = formatDateToDDMMYYYY(msg.date || '');
-        const dateValue = formatDateToDDMMYYYY(msg.workDate === 'N/A' ? msg.date : (msg.workDate || msg.date || ''));
+        const workDate = msg.workDate === 'N/A' ? msg.date : (msg.workDate || msg.date || '');
+        const dateValue = formatDateToDDMMYYYY(workDate);
+        const sender = msg.sender || 'Unknown';
+        
+        // Check if this work date + person combination is a duplicate
+        const normalizedWorkDate = formatDateToDDMMYYYY(workDate);
+        const datePersonKey = `${normalizedWorkDate}_${sender}`;
+        const isDuplicateDate = normalizedWorkDate && seenDatePersonCombos.has(datePersonKey);
+        
+        if (!isDuplicateDate && normalizedWorkDate) {
+            seenDatePersonCombos.add(datePersonKey);
+        }
+        
+        const isUnmatched = msg.unmatched || !msg.startTime || !msg.endTime;
         const formatCellValue = (value) => {
             if (value === 'N/A') return '<span style="color: #999; font-style: italic;">N/A</span>';
             return value || '';
@@ -1833,17 +1894,21 @@ function displayFilteredMessages(messages) {
         // Create unique key for matching: date_time_sender_message
         const uniqueKey = `${msg.date}_${msg.time}_${msg.sender}_${msg.message}`;
         
+        // If duplicate date, show empty fields and mark date red
+        const dateCellStyle = isDuplicateDate ? ' style="color: #cc0000; font-weight: 600;"' : '';
+        const dateCellContent = isDuplicateDate ? `<span style="color: #cc0000;">${dateValue}</span>` : dateValue;
+        
         return `
         <tr${isUnmatched ? ' style="background-color: #fff3cd;"' : ''} data-row-index="${index}" data-msg-key="${uniqueKey.replace(/"/g, '&quot;')}">
             <td class="col-msg-date" data-field="msgDate">${msgDateValue}</td>
-            <td class="col-date editable-number" contenteditable="true" data-field="date">${dateValue}</td>
+            <td class="col-date" data-field="date"${dateCellStyle}>${dateCellContent}</td>
             <td class="col-name" data-field="sender">${msg.sender || 'Unknown'}</td>
-            <td class="col-start-time editable-number" contenteditable="true" data-field="startTime">${formatCellValue(msg.startTime)}</td>
-            <td class="col-end-time editable-number" contenteditable="true" data-field="endTime">${formatCellValue(msg.endTime)}</td>
-            <td class="col-break editable-number" contenteditable="true" data-field="breakTime">${formatCellValue(msg.breakTime)}</td>
-            <td class="col-netto" data-field="nettoTime">${formatCellValue(msg.nettoTime)}</td>
-            <td class="col-regie editable-number" contenteditable="true" data-field="regieTime">${formatCellValue(msg.regieTime)}</td>
-            <td class="col-regie-type" contenteditable="true" data-field="regieType">${formatCellValue(msg.regieType)}</td>
+            <td class="col-start-time editable-number" contenteditable="true" data-field="startTime">${isDuplicateDate ? '' : formatCellValue(msg.startTime)}</td>
+            <td class="col-end-time editable-number" contenteditable="true" data-field="endTime">${isDuplicateDate ? '' : formatCellValue(msg.endTime)}</td>
+            <td class="col-break editable-number" contenteditable="true" data-field="breakTime">${isDuplicateDate ? '' : formatCellValue(msg.breakTime)}</td>
+            <td class="col-netto" data-field="nettoTime">${isDuplicateDate ? '' : formatCellValue(msg.nettoTime)}</td>
+            <td class="col-regie editable-number" contenteditable="true" data-field="regieTime">${isDuplicateDate ? '' : formatCellValue(msg.regieTime)}</td>
+            <td class="col-regie-type" contenteditable="true" data-field="regieType">${isDuplicateDate ? '' : formatCellValue(msg.regieType)}</td>
             <td class="col-message">${highlightedMessage.replace(/\n/g, '<br>')}</td>
         </tr>
     `;
@@ -1865,12 +1930,7 @@ function displayFilteredMessages(messages) {
             let isValid = true;
             let errorMessage = '';
             
-            if (field === 'date') {
-                if (updatedValue && !validateDateFormat(updatedValue)) {
-                    isValid = false;
-                    errorMessage = 'Invalid date format. Please use dd.mm.yyyy (e.g., 25.12.2024)';
-                }
-            } else if (['startTime', 'endTime', 'breakTime', 'regieTime'].includes(field)) {
+            if (['startTime', 'endTime', 'breakTime', 'regieTime'].includes(field)) {
                 if (updatedValue && !validateTimeFormat(updatedValue)) {
                     isValid = false;
                     errorMessage = 'Invalid time format. Please use HH:MM (e.g., 08:30)';
@@ -1882,12 +1942,6 @@ function displayFilteredMessages(messages) {
                 // Restore previous value or clear if invalid
                 this.textContent = '';
                 this.focus();
-                return;
-            }
-            
-            // If date changed, update stats (filtering might change)
-            if (field === 'date') {
-                updateStatsFromDOM();
                 return;
             }
             

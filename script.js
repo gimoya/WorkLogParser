@@ -18,7 +18,24 @@ const REGIE_DURATION_PATTERNS = [
 
 const BREAK_CONTEXT_KEYWORDS = /\b(break|lunch|pause|tea|rest|lunch\s*[+&]\s*tea)\b/i;
 const REGIE_KEYWORD = /\bregie\b/i;
-const REGIE_TYPE_KEYWORDS = /\b(regie|wood|clearing|bushes|branches|material\s+transport|cutting\s+trees?|cutting\s+bushes|cutting\s+branches|fallen\s+trees?|cut\s+trees?|cut\s+bushes|cut\s+branches|moving\s+branches?|chainsaw\s+cutting|wood\s+clearing|clearing\s+wood)\b/i;
+// Shared regie type keyword patterns (ordered longest to shortest for proper matching)
+// These patterns are used both for extraction and highlighting
+const REGIE_TYPE_KEYWORD_PATTERNS = [
+    /\bmaterial\s+transport\b/gi,
+    /\bcutting\s+trees?\b/gi,
+    /\bcutting\s+bushes\b/gi,
+    /\bcutting\s+branches\b/gi,
+    /\bfallen\s+trees?\b/gi,
+    /\bcut\s+trees?\b/gi,
+    /\bcut\s+bushes\b/gi,
+    /\bcut\s+branches\b/gi,
+    /\bchainsaw\s+cutting\b/gi,
+    /\bwood\b/gi,
+    /\bbushes\b/gi,
+    /\bbranches\b/gi
+];
+// Combined regex for highlighting (includes "regie" keyword)
+const REGIE_TYPE_KEYWORDS = /\b(regie|material\s+transport|cutting\s+trees?|cutting\s+bushes|cutting\s+branches|fallen\s+trees?|cut\s+trees?|cut\s+bushes|cut\s+branches|moving\s+branches?|chainsaw\s+cutting|wood\s+clearing|clearing\s+wood|wood|clearing|bushes|branches)\b/i;
 const TIME_RANGE_PATTERN = /(\d{1,2})\s*:\s*(\d{2})\s*-\s*(\d{1,2})\s*:\s*(\d{2})/;
 const TIME_PATTERN = /\b(\d{1,2})\s*:\s*(\d{2})\b/g;
 
@@ -254,11 +271,10 @@ function extractTimeDetails(text, entry) {
     }
     
     // Extract regie entries
-    const regieEntries = extractRegieEntries(text, entry.regieType);
-    const regieData = processRegieEntries(regieEntries, entry.regieType);
+    const regieEntries = extractRegieEntries(text);
+    const regieData = processRegieEntries(regieEntries);
     if (regieData.regieTime) {
         entry.regieTime = regieData.regieTime;
-        entry.regieType = regieData.regieType;
         entry.regieOriginalText = regieData.regieOriginalText;
     }
     
@@ -302,10 +318,16 @@ function extractBreakTime(text, existingBreakTime = '') {
             const context = text.substring(breakIndex + breakMatch[0].length, endIdx);
 
             // Case 1: Has break context keyword (lunch, tea, break, etc.)
-            if (BREAK_CONTEXT_KEYWORDS.test(context)) {
+            const contextMatch = context.match(BREAK_CONTEXT_KEYWORDS);
+            if (contextMatch) {
+                // Store both the duration and the context keyword for highlighting
+                // Include the text from breakMatch to the end of the context keyword
+                const contextKeyword = contextMatch[0];
+                const textAfterDuration = context.substring(0, contextMatch.index + contextKeyword.length);
+                const fullBreakText = breakMatch[0] + textAfterDuration;
                 return {
                     minutes: parseDurationValue(breakMatch[1], pattern.source),
-                    originalText: breakMatch[0] // Store original pattern text for highlighting
+                    originalText: fullBreakText.trim() // Store duration + context keyword for highlighting
                 };
             }
             
@@ -347,7 +369,7 @@ function extractBreakTime(text, existingBreakTime = '') {
     return { minutes: 0, originalText: '' };
 }
 
-function extractRegieEntries(text, existingRegieType = '') {
+function extractRegieEntries(text) {
     const regieEntries = [];
     const matchedRanges = []; // Track matched ranges to prevent overlapping matches
     
@@ -374,52 +396,8 @@ function extractRegieEntries(text, existingRegieType = '') {
                 const regieMinutes = parseDurationValue(regieMatch[1], pattern.source);
                 const regieTime = minutesToHHMM(regieMinutes);
 
-                // Extract regie type from context
-                let regieType = existingRegieType || '';
-                if (!regieType) {
-                    // Find text after "regie" keyword
-                    const regieKeywordPos = regieMatchInContext.index + regieIndex + regieMatch[0].length;
-                    const afterRegie = text.substring(regieKeywordPos + 5); // +5 for "regie"
-                    
-                    // Search for regie type keywords AFTER "regie" keyword only (case insensitive)
-                    // Match phrases first (longer), then single words
-                    const keywordPhrases = [
-                        /\bmaterial\s+transport\b/gi,
-                        /\bcutting\s+trees?\b/gi,
-                        /\bcutting\s+bushes\b/gi,
-                        /\bcutting\s+branches\b/gi,
-                        /\bfallen\s+trees?\b/gi,
-                        /\bcut\s+trees?\b/gi,
-                        /\bcut\s+bushes\b/gi,
-                        /\bcut\s+branches\b/gi,
-                        /\bchainsaw\s+cutting\b/gi,
-                        /\bwood\s+clearing\b/gi,
-                        /\bclearing\s+wood\b/gi,
-                        /\bwood\b/gi,
-                        /\bclearing\b/gi,
-                        /\bbushes\b/gi,
-                        /\bbranches\b/gi
-                    ];
-                    
-                    const foundKeywords = [];
-                    for (const pattern of keywordPhrases) {
-                        const matches = [...afterRegie.matchAll(pattern)];
-                        for (const match of matches) {
-                            const keyword = match[0].toLowerCase().replace(/\s+/g, ' ').trim();
-                            if (!foundKeywords.includes(keyword)) {
-                                foundKeywords.push(keyword);
-                            }
-                        }
-                    }
-                    
-                    if (foundKeywords.length > 0) {
-                        regieType = foundKeywords.join(', ');
-                    }
-                }
-
                 regieEntries.push({
                     time: regieTime,
-                    type: regieType,
                     minutes: regieMinutes,
                     originalText: regieMatch[0]
                 });
@@ -432,22 +410,19 @@ function extractRegieEntries(text, existingRegieType = '') {
     return regieEntries;
 }
 
-function processRegieEntries(regieEntries, existingRegieType = '') {
-    if (regieEntries.length === 0) return { regieTime: '', regieType: '', regieOriginalText: '' };
+function processRegieEntries(regieEntries) {
+    if (regieEntries.length === 0) return { regieTime: '', regieOriginalText: '' };
 
     if (regieEntries.length === 1) {
         return {
             regieTime: regieEntries[0].time,
-            regieType: regieEntries[0].type || existingRegieType || '',
             regieOriginalText: regieEntries[0].originalText
         };
     } else {
         // Sum all regie times
         const totalRegieMinutes = regieEntries.reduce((sum, e) => sum + e.minutes, 0);
-        const types = regieEntries.filter(e => e.type).map(e => e.type);
         return {
             regieTime: minutesToHHMM(totalRegieMinutes),
-            regieType: types.length > 0 ? types.join(', ') : existingRegieType || '',
             regieOriginalText: regieEntries.map(e => e.originalText).join('|')
         };
     }
@@ -463,7 +438,6 @@ function createEmptyEntry() {
         breakOriginalText: '', // Store original pattern text for highlighting
         nettoTime: '',
         regieTime: '',
-        regieType: '',
         regieOriginalText: ''
     };
 }
@@ -490,7 +464,7 @@ function processMessage(message, dateStr, timeStr, sender, log) {
     const workInfo = workEntries.length > 0 ? workEntries[0] : createEmptyEntry();
     
     const hasData = workInfo.workDate || workInfo.startTime || workInfo.endTime || 
-                   workInfo.breakTime || workInfo.regieTime || workInfo.regieType;
+                   workInfo.breakTime || workInfo.regieTime;
     if (hasData) {
         log(`  ✓ Extracted: date=${workInfo.workDate || 'none'}, time=${workInfo.startTime || 'none'}-${workInfo.endTime || 'none'}, break=${workInfo.breakTime || 'none'}, regie=${workInfo.regieTime || 'none'}`);
     } else {
@@ -508,7 +482,7 @@ function createMessageEntry(dateStr, timeStr, sender, message, workInfo, date) {
         time: timeStr,
         sender: sender.trim(),
         message: message.trim(),
-        workDate: workInfo.workDate ? formatDateToDDMMYYYY(workInfo.workDate) : formatDateToDDMMYYYY(dateStr),
+        workDate: workInfo.workDate ? formatDateToDDMMYYYY(workInfo.workDate) : '',
         startTime: workInfo.startTime,
         endTime: workInfo.endTime,
         timeRangeOriginalText: workInfo.timeRangeOriginalText || '',
@@ -516,7 +490,6 @@ function createMessageEntry(dateStr, timeStr, sender, message, workInfo, date) {
         breakOriginalText: workInfo.breakOriginalText || '',
         nettoTime: workInfo.nettoTime,
         regieTime: workInfo.regieTime,
-        regieType: workInfo.regieType || '',
         regieOriginalText: workInfo.regieOriginalText || '',
         additionalDates: workInfo.additionalDates || [],
         structuredFormatMatch: workInfo.structuredFormatMatch || null,
@@ -541,7 +514,6 @@ function updateWorkInfoFromEntry(target, source) {
         target.regieTime = source.regieTime;
         target.regieOriginalText = source.regieOriginalText || '';
     }
-    if (source.regieType && !target.regieType) target.regieType = source.regieType;
 }
 
 // Extract ZIP file
@@ -676,12 +648,15 @@ function highlightMessage(message, workEntries) {
             }
         }
     }
-    const addMatches = (text, pattern) => {
+    const addMatches = (text, pattern, limitToFirst = false) => {
         if (!text?.trim()) return;
         const regex = new RegExp(pattern, 'gi');
         let match;
+        let matchCount = 0;
         while ((match = regex.exec(message)) !== null) {
             highlightRanges.push({ start: match.index, end: match.index + match[0].length, text: match[0] });
+            matchCount++;
+            if (limitToFirst && matchCount >= 1) break; // Only match first occurrence
         }
     };
     
@@ -726,32 +701,36 @@ function highlightMessage(message, workEntries) {
                 }
             }
             if (entry.breakTime?.trim()) {
-                // Use original text pattern if available (e.g., "1h", "45'", "1/2 hr")
+                // Use original text pattern if available (e.g., "1h", "45'", "1/2 hr", "45' lunch")
                 if (entry.breakOriginalText?.trim()) {
+                    // Escape special regex characters, but keep apostrophe as-is (it's safe in regex)
                     const escapedText = entry.breakOriginalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                    // Make whitespace flexible for matching
-                    addMatches(entry.breakOriginalText, escapedText.replace(/\s+/g, '\\s+'));
+                    // Make whitespace flexible for matching (handles "45'  lunch" or "45' lunch")
+                    const patternWithSpaces = escapedText.replace(/\s+/g, '\\s+');
+                    // Match the pattern with word boundary at the end to prevent partial matches
+                    // Don't require word boundary at start (might have punctuation like period before it)
+                    const pattern = patternWithSpaces + '\\b';
+                    addMatches(entry.breakOriginalText, pattern, true);
                 } else {
                     // Fallback: try to match formatted time (less reliable)
                     const breakMatch = entry.breakTime.match(/(\d+(?:\/\d+)?(?:\.\d+)?)\s*(?:hr|hrs|h|min|'|minute|minuten)?/i);
                     if (breakMatch) {
-                        addMatches(breakMatch[0], `\\b${breakMatch[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+                        addMatches(breakMatch[0], `\\b${breakMatch[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, true);
                     }
                 }
             }
             if (entry.regieTime?.trim()) {
                 if (entry.regieOriginalText?.trim()) {
                     entry.regieOriginalText.split('|').forEach(originalText => {
-                        addMatches(originalText, originalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'));
+                        // Only match first occurrence of each regie entry, use word boundaries
+                        const escapedText = originalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                        const pattern = `\\b${escapedText.replace(/\s+/g, '\\s+')}\\b`;
+                        addMatches(originalText, pattern, true);
                     });
                 } else {
-                    addMatches(entry.regieTime, `\\b${entry.regieTime.replace(':', '\\:')}\\b`);
+                    addMatches(entry.regieTime, `\\b${entry.regieTime.replace(':', '\\:')}\\b`, true);
                 }
             }
-            if (entry.regieType?.trim()) {
-                addMatches(entry.regieType, `\\b${entry.regieType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
-            }
-            
             // Highlight additional dates found after first extracted date
             if (entry.additionalDates && entry.additionalDates.length > 0) {
                 entry.additionalDates.forEach(additionalDate => {
@@ -765,9 +744,9 @@ function highlightMessage(message, workEntries) {
             }
         }
         
-        // Check if regie time is empty but regie type keywords are found - mark in light red
+        // Check if regie time is empty but regie keywords are found - mark in light red
         // This should run regardless of whether structured format matched (e.g., if regie wasn't extracted from structured format)
-        if (!entry.regieTime?.trim() && !entry.regieType?.trim()) {
+        if (!entry.regieTime?.trim()) {
             const regieTypeKeywordsGlobal = new RegExp(REGIE_TYPE_KEYWORDS.source, 'gi');
             const regieKeywordMatches = [...message.matchAll(regieTypeKeywordsGlobal)];
             for (const regieMatch of regieKeywordMatches) {
@@ -840,30 +819,32 @@ function extractWorkInfo(message, logCallback = null) {
     };
     
     // FIRST: Try structured format: "18.11., 08:00, 14:00, break: 30, regie: 90, regie-type: wood, Work Description"
-    // Format: dd.mm., H:MM or HH:MM, H:MM or HH:MM, break: MM, regie: MM (or regie-hrs: MM), regie-type: text, description
+    // Format: dd.mm., H:MM or HH:MM, H:MM or HH:MM, break: MM, reg:anything MM (or time format), reg:anything-type: text, description
     // Whitespace-insensitive: matches with any amount/type of whitespace (including newlines) or none
     // Structured pattern - allow newlines and any whitespace everywhere, make commas optional
     // Use [\s\n]* everywhere instead of \s* to allow newlines, and make commas optional
-    const structuredPattern = /(\d{2}\.\d{2}\.)[\s\n]*(?:,|[\s\n]+)[\s\n]*(\d{1,2}:\d{2})[\s\n]*(?:,|[\s\n]+)[\s\n]*(\d{1,2}:\d{2})(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*break[\s\n]*:[\s\n]*(\d+))?(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*regie(?:\s*-\s*hrs)?[\s\n]*:[\s\n]*(\d+))?(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*regie[\s\n]*-\s*type[\s\n]*:[\s\n]*([^,\n]+))?(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*([\s\S]+))?/i;
+    // Regie matching: "reg" followed by anything (handles typos like "reggie") then digit/time format, optionally followed by "hr"/"hrs"
+    const structuredPattern = /(\d{2}\.\d{2}\.)[\s\n]*(?:,|[\s\n]+)[\s\n]*(\d{1,2}:\d{2})[\s\n]*(?:,|[\s\n]+)[\s\n]*(\d{1,2}:\d{2})(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*break[\s\n]*:?[\s\n]*(\d+))?(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*reg[^\d]*((?:\d{1,2}:\d{2})|(\d+)(?:\s*(?:hr|hrs))?))?(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*([\s\S]+))?/i;
     const structuredMatch = message.match(structuredPattern);
     
     if (structuredMatch) {
         log(`  extractWorkInfo: Structured format matched!`);
-        log(`    Groups: date=${structuredMatch[1]}, start=${structuredMatch[2]}, end=${structuredMatch[3]}, break=${structuredMatch[4]}, regie=${structuredMatch[5]}, regie-type=${structuredMatch[6]}`);
+        log(`    Groups: date=${structuredMatch[1]}, start=${structuredMatch[2]}, end=${structuredMatch[3]}, break=${structuredMatch[4]}, regie=${structuredMatch[5]}`);
         
         // Store the full structured match for highlighting
         const matchStartIndex = structuredMatch.index;
-        // structuredMatch[0] may include optional description text (group 7)
-        // We need to extract only the pattern part, stopping before the description
+        // structuredMatch[0] includes everything, but we only want to highlight the structured pattern
+        // not the description. Group 7 is the description (group 6 is nested regie digits)
         let fullMatch = structuredMatch[0];
+        const description = structuredMatch[7]; // Description is group 7
         
-        // If group 7 (description) exists, the pattern ends before it
-        // Find the position where description starts in the full match
-        if (structuredMatch[7]) {
-            const descInFullMatch = fullMatch.lastIndexOf(structuredMatch[7]);
-            if (descInFullMatch > 0) {
-                // Pattern ends just before description - trim trailing whitespace and comma
-                fullMatch = fullMatch.substring(0, descInFullMatch).trimEnd();
+        if (description) {
+            // Find where description starts in the original message (not in fullMatch)
+            // This is more reliable than searching in fullMatch
+            const descStartInMessage = message.indexOf(description, matchStartIndex);
+            if (descStartInMessage > matchStartIndex) {
+                // Extract only the structured pattern part (before description)
+                fullMatch = message.substring(matchStartIndex, descStartInMessage).trimEnd();
                 // Remove trailing comma if present
                 if (fullMatch.endsWith(',')) {
                     fullMatch = fullMatch.slice(0, -1).trimEnd();
@@ -892,14 +873,46 @@ function extractWorkInfo(message, logCallback = null) {
             log(`    Extracted break: ${entry.breakTime}`);
         }
         if (structuredMatch[5]) {
-            entry.regieTime = minutesToHHMM(parseInt(structuredMatch[5]));
+            // Handle time format (0:10, 1:15), hours (1 hr, 2 hrs), and minutes (10, 15, 30, 45, 90)
+            const regieValue = structuredMatch[5];
+            const regieDigits = structuredMatch[6]; // Captured digits if not time format
+            let regieMinutes;
+            
+            if (regieValue.includes(':')) {
+                // Time format: "0:10", "1:15" = already in hours:minutes format
+                regieMinutes = parseTimeToMinutes(regieValue);
+                log(`    Regie time format detected: "${regieValue}" = ${regieMinutes} minutes`);
+            } else if (regieDigits) {
+                // Check if "hr" or "hrs" appears in the full value (after the digits)
+                const hasHr = /\b(?:hr|hrs)\b/i.test(regieValue);
+                const numericValue = parseInt(regieDigits);
+                
+                // Common minute values: 10, 15, 30, 45, 90
+                const commonMinutes = [10, 15, 30, 45, 90];
+                
+                if (hasHr) {
+                    // Explicitly marked as hours: "1 hr", "2 hrs"
+                    regieMinutes = numericValue * 60;
+                    log(`    Regie hours detected: "${regieValue}" = ${numericValue} hours = ${regieMinutes} minutes`);
+                } else if (commonMinutes.includes(numericValue)) {
+                    // Common minute values without "hr/hrs" = minutes
+                    regieMinutes = numericValue;
+                    log(`    Regie minutes detected: "${regieValue}" = ${regieMinutes} minutes`);
+                } else {
+                    // Other values without "hr/hrs" = assume hours (1, 2, 3, etc.)
+                    regieMinutes = numericValue * 60;
+                    log(`    Regie assumed hours: "${regieValue}" = ${numericValue} hours = ${regieMinutes} minutes`);
+                }
+            } else {
+                // Fallback: treat as minutes
+                regieMinutes = parseInt(regieValue);
+                log(`    Regie fallback (minutes): "${regieValue}" = ${regieMinutes} minutes`);
+            }
+            
+            entry.regieTime = minutesToHHMM(regieMinutes);
             // Don't store regieOriginalText for structured format - fullMatch will be highlighted
             entry.regieOriginalText = '';
-            log(`    Extracted regie: ${entry.regieTime}`);
-        }
-        if (structuredMatch[6]) {
-            entry.regieType = structuredMatch[6].trim();
-            log(`    Extracted regie-type: ${entry.regieType}`);
+            log(`    Extracted regie: ${entry.regieTime} (from "${regieValue}")`);
         }
         
         entry.nettoTime = calculateNettoTime(entry.startTime, entry.endTime, entry.breakTime, ''); // Netto doesn't subtract regie
@@ -1412,14 +1425,13 @@ function generateSummaryTables(messages) {
             workerData[worker] = {
                 workingDays: new Set(),
                 totalNettoMinutes: 0,
-                totalRegieMinutes: 0,
-                regieTypes: new Set()
+                totalRegieMinutes: 0
             };
         }
         
-        // Count working days (unique dates)
-        if (msg.workDate || msg.date) {
-            workerData[worker].workingDays.add(msg.workDate || msg.date);
+        // Count working days (unique dates) - only use dates from message body
+        if (msg.workDate) {
+            workerData[worker].workingDays.add(msg.workDate);
         }
         
         // Sum netto time
@@ -1428,17 +1440,10 @@ function generateSummaryTables(messages) {
             workerData[worker].totalNettoMinutes += hours * 60 + minutes;
         }
         
-        // Sum all regie hours and collect unique types
+        // Sum all regie hours
         if (msg.regieTime) {
             const [regieHours, regieMinutes] = msg.regieTime.split(':').map(Number);
             workerData[worker].totalRegieMinutes += regieHours * 60 + regieMinutes;
-            
-            // Collect unique regie types
-            if (msg.regieType && msg.regieType.trim()) {
-                // Handle comma-separated types (from multiple regie entries)
-                const types = msg.regieType.split(',').map(t => t.trim()).filter(t => t);
-                types.forEach(type => workerData[worker].regieTypes.add(type));
-            }
         }
     });
     
@@ -1456,10 +1461,6 @@ function generateSummaryTables(messages) {
         const regieMins = data.totalRegieMinutes % 60;
         const regieFormatted = `${String(regieHours).padStart(2, '0')}:${String(regieMins).padStart(2, '0')}`;
         
-        const regieTypesList = Array.from(data.regieTypes).sort().map(type => 
-            `<span class="pill">${type}</span>`
-        ).join('');
-        
         summaryHTML += `
             <div class="summary-section">
                 <h3>${worker}</h3>
@@ -1468,24 +1469,20 @@ function generateSummaryTables(messages) {
                         <tr>
                             <th style="text-align: left; white-space: nowrap;">Metric</th>
                             <th style="text-align: right; white-space: nowrap;">Value</th>
-                            <th style="text-align: left;">Note</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
                             <td><strong>Working Days</strong></td>
                             <td style="text-align: right;">${workingDays}</td>
-                            <td></td>
                         </tr>
                         <tr>
                             <td><strong>Working Hours (Netto)</strong></td>
                             <td style="text-align: right;">${totalHoursFormatted}</td>
-                            <td></td>
                         </tr>
                         <tr>
                             <td><strong>Regie Hours (Total)</strong></td>
                             <td style="text-align: right;">${regieFormatted}</td>
-                            <td>${regieTypesList || '-'}</td>
                         </tr>
                     </tbody>
                 </table>
@@ -1574,15 +1571,14 @@ function syncEditsToAllParsedMessages() {
             const endTime = getCellValue('endTime');
             const breakTime = getCellValue('breakTime');
             const regieTime = getCellValue('regieTime');
-            const regieType = getCellValue('regieType');
             
             // Always update these fields (even if empty, to allow clearing)
-            originalMsg.workDate = workDate || originalMsg.workDate || originalMsg.date;
+            // Only use dates from message body, never fallback to header date
+            originalMsg.workDate = workDate || originalMsg.workDate || '';
             originalMsg.startTime = startTime || '';
             originalMsg.endTime = endTime || '';
             originalMsg.breakTime = breakTime || '';
             originalMsg.regieTime = regieTime || '';
-            originalMsg.regieType = regieType || '';
             
             // Recalculate netto
             const nettoTime = calculateNettoTime(startTime, endTime, breakTime, '');
@@ -1625,7 +1621,6 @@ function updateStatsFromDOM() {
             breakTime: breakTime,
             nettoTime: nettoTime,
             regieTime: regieTime,
-            regieType: getCellValue('regieType'),
             message: messageText
         };
     });
@@ -1659,7 +1654,6 @@ function exportToCSV() {
         'Break',
         'Netto',
         'Regie-hrs',
-        'Regie-type',
         'Worker',
         'Log-Text'
     ];
@@ -1686,7 +1680,6 @@ function exportToCSV() {
             getCellValue('breakTime'),
             getCellValue('nettoTime'),
             getCellValue('regieTime'),
-            getCellValue('regieType'),
             getCellValue('sender'),
             messageText
         ].map(field => `"${(field || '').replace(/"/g, '""')}"`).join(';');
@@ -1748,9 +1741,9 @@ function parseDateToComparable(dateStr) {
 // Filter messages by date range and worker
 function filterMessages(messages, fromDate, toDate, worker) {
     return messages.filter(msg => {
-        // Filter by date
+        // Filter by date - only use dates from message body
         if (fromDate || toDate) {
-            const msgDate = msg.workDate && msg.workDate !== 'N/A' ? msg.workDate : msg.date;
+            const msgDate = msg.workDate && msg.workDate !== 'N/A' ? msg.workDate : '';
             if (!msgDate) return false;
             
             const comparableDate = parseDateToComparable(formatDateToDDMMYYYY(msgDate));
@@ -1775,7 +1768,8 @@ function findEarliestDate(messages) {
     let earliest = null;
     
     messages.forEach(msg => {
-        const msgDate = msg.workDate && msg.workDate !== 'N/A' ? msg.workDate : msg.date;
+        // Only use dates from message body, never fallback to header date
+        const msgDate = msg.workDate && msg.workDate !== 'N/A' ? msg.workDate : '';
         if (!msgDate) return;
         
         const comparableDate = parseDateToComparable(formatDateToDDMMYYYY(msgDate));
@@ -1851,7 +1845,6 @@ function displayFilteredMessages(messages) {
             breakTime: msg.breakTime,
             breakOriginalText: msg.breakOriginalText || '',
             regieTime: msg.regieTime,
-            regieType: msg.regieType,
             regieOriginalText: msg.regieOriginalText || '',
             additionalDates: msg.additionalDates || [],
             structuredFormatMatch: msg.structuredFormatMatch || null,
@@ -1869,12 +1862,13 @@ function displayFilteredMessages(messages) {
         const group = messageGroups[key];
         // Only highlight if we have actual extracted values (not all empty)
         const hasExtractedData = group && group.entries.some(entry => 
-            entry.workDate || entry.startTime || entry.endTime || entry.breakTime || entry.regieTime || entry.regieType
+            entry.workDate || entry.startTime || entry.endTime || entry.breakTime || entry.regieTime
         );
         const highlightedMessage = hasExtractedData ? highlightMessage(msg.message, group.entries) : msg.message;
         
         const msgDateValue = formatDateToDDMMYYYY(msg.date || '');
-        const workDate = msg.workDate === 'N/A' ? msg.date : (msg.workDate || msg.date || '');
+        // Only use dates from message body, never fallback to header date
+        const workDate = msg.workDate === 'N/A' ? '' : (msg.workDate || '');
         const dateValue = formatDateToDDMMYYYY(workDate);
         const sender = msg.sender || 'Unknown';
         
@@ -1910,7 +1904,6 @@ function displayFilteredMessages(messages) {
             <td class="col-break editable-number" contenteditable="true" data-field="breakTime">${isDuplicateDate ? '' : formatCellValue(msg.breakTime)}</td>
             <td class="col-netto" data-field="nettoTime">${isDuplicateDate ? '' : formatCellValue(msg.nettoTime)}</td>
             <td class="col-regie editable-number" contenteditable="true" data-field="regieTime">${isDuplicateDate ? '' : formatCellValue(msg.regieTime)}</td>
-            <td class="col-regie-type" contenteditable="true" data-field="regieType">${isDuplicateDate ? '' : formatCellValue(msg.regieType)}</td>
             <td class="col-message">${highlightedMessage.replace(/\n/g, '<br>')}</td>
         </tr>
     `;

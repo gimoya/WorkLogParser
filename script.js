@@ -39,14 +39,14 @@ const REGIE_TYPE_KEYWORDS = /\b(regie|material\s+transport|cutting\s+trees?|cutt
 const TIME_RANGE_PATTERN = /(\d{1,2})\s*:\s*(\d{2})\s*-\s*(\d{1,2})\s*:\s*(\d{2})/;
 const TIME_PATTERN = /\b(\d{1,2})\s*:\s*(\d{2})\b/g;
 
-// Date patterns
-const DATE_PATTERN_DASH_SLASH = /:\s*(\d{2}\.\d{2}(?:\.\d{2,4})?\.?)\s*[-/]/;
-const DATE_PATTERN_WITH_TIME = /:\s*(\d{2}\.\d{2}(?:\.\d{2,4})?\.?)\s+(?=\d{1,2}\s*:\s*\d{2})/;
-const DATE_PATTERN_AFTER_COLON = /:\s*(\d{2}\.\d{2}(?:\.\d{2,4})?\.?)(?=\s|\n|$|[^\d])/;
-const DATE_PATTERN_START = /^(\d{2}\.\d{2}(?:\.\d{2,4})?\.?)(?=\s|\n|$|[^\d])/;
-const DATE_PATTERN_START_WS = /^\s+(\d{2}\.\d{2}(?:\.\d{2,4})?\.?)(?=\s|\n|$|[^\d])/;
-const DATE_PATTERN_GENERAL = /(?:^|\s|:)(\d{2}\.\d{2}(?:\.\d{2,4})?\.?)(?=\s|\n|$|[^\d])/m;
-const DATE_PATTERN_ALL = /(\d{2}\.\d{2}(?:\.\d{2,4})?\.?)(?=\s|$|[^\d])/g;
+// Date patterns - allow single or double digits for day and month
+const DATE_PATTERN_DASH_SLASH = /:\s*(\d{1,2}\.\d{1,2}(?:\.\d{2,4})?\.?)\s*[-/]/;
+const DATE_PATTERN_WITH_TIME = /:\s*(\d{1,2}\.\d{1,2}(?:\.\d{2,4})?\.?)\s+(?=\d{1,2}\s*:\s*\d{2})/;
+const DATE_PATTERN_AFTER_COLON = /:\s*(\d{1,2}\.\d{1,2}(?:\.\d{2,4})?\.?)(?=\s|\n|$|[^\d])/;
+const DATE_PATTERN_START = /^(\d{1,2}\.\d{1,2}(?:\.\d{2,4})?\.?)(?=\s|\n|$|[^\d])/;
+const DATE_PATTERN_START_WS = /^\s+(\d{1,2}\.\d{1,2}(?:\.\d{2,4})?\.?)(?=\s|\n|$|[^\d])/;
+const DATE_PATTERN_GENERAL = /(?:^|\s|:)(\d{1,2}\.\d{1,2}(?:\.\d{2,4})?\.?)(?=\s|\n|$|[^\d])/m;
+const DATE_PATTERN_ALL = /(\d{1,2}\.\d{1,2}(?:\.\d{2,4})?\.?)(?=\s|$|[^\d])/g;
 
 // ========== HELPER FUNCTIONS ==========
 function formatDateToDDMMYYYY(dateStr) {
@@ -57,17 +57,30 @@ function formatDateToDDMMYYYY(dateStr) {
         return dateStr;
     }
     
-    // If in dd.mm or dd.mm. format, add current year
-    if (/^\d{2}\.\d{2}\.?$/.test(dateStr)) {
+    // If in d.m or d.m. or dd.m or d.mm format (single or double digits), normalize and add current year
+    if (/^\d{1,2}\.\d{1,2}\.?$/.test(dateStr)) {
+        const parts = dateStr.replace(/\.$/, '').split('.');
+        const day = parts[0].padStart(2, '0');
+        const month = parts[1].padStart(2, '0');
         const year = new Date().getFullYear();
-        return dateStr.replace(/\.?$/, '') + '.' + year;
+        return `${day}.${month}.${year}`;
     }
     
-    // If in dd.mm.yy format, convert to yyyy
-    if (/^\d{2}\.\d{2}\.\d{2}$/.test(dateStr)) {
+    // If in d.m.yy or dd.mm.yy format, convert to yyyy
+    if (/^\d{1,2}\.\d{1,2}\.\d{2}$/.test(dateStr)) {
         const parts = dateStr.split('.');
+        const day = parts[0].padStart(2, '0');
+        const month = parts[1].padStart(2, '0');
         const year = parts[2].length === 2 ? '20' + parts[2] : parts[2];
-        return `${parts[0]}.${parts[1]}.${year}`;
+        return `${day}.${month}.${year}`;
+    }
+    
+    // If in d.m.yyyy or dd.mm.yyyy format, normalize to dd.mm.yyyy
+    if (/^\d{1,2}\.\d{1,2}\.\d{4}$/.test(dateStr)) {
+        const parts = dateStr.split('.');
+        const day = parts[0].padStart(2, '0');
+        const month = parts[1].padStart(2, '0');
+        return `${day}.${month}.${parts[2]}`;
     }
     
     // If in yyyy-mm-dd format (from metadata), convert to dd.mm.yyyy
@@ -476,13 +489,21 @@ function processMessage(message, dateStr, timeStr, sender, log) {
 }
 
 function createMessageEntry(dateStr, timeStr, sender, message, workInfo, date) {
+    // For fuzzy/fallback path: if no date found in message body, use message header date
+    // For structured format: workDate is always set, so this fallback won't apply
+    let workDate = workInfo.workDate ? formatDateToDDMMYYYY(workInfo.workDate) : '';
+    if (!workDate && !workInfo.structuredFormatMatch) {
+        // Fallback to message header date for fuzzy path only
+        workDate = formatDateToDDMMYYYY(dateStr);
+    }
+    
     return {
         timestamp: date.toISOString(),
         date: dateStr,
         time: timeStr,
         sender: sender.trim(),
         message: message.trim(),
-        workDate: workInfo.workDate ? formatDateToDDMMYYYY(workInfo.workDate) : '',
+        workDate: workDate,
         startTime: workInfo.startTime,
         endTime: workInfo.endTime,
         timeRangeOriginalText: workInfo.timeRangeOriginalText || '',
@@ -824,7 +845,8 @@ function extractWorkInfo(message, logCallback = null) {
     // Structured pattern - allow newlines and any whitespace everywhere, make commas optional
     // Use [\s\n]* everywhere instead of \s* to allow newlines, and make commas optional
     // Regie matching: "reg" followed by anything (handles typos like "reggie") then digit/time format, optionally followed by "hr"/"hrs"
-    const structuredPattern = /(\d{2}\.\d{2}\.)[\s\n]*(?:,|[\s\n]+)[\s\n]*(\d{1,2}:\d{2})[\s\n]*(?:,|[\s\n]+)[\s\n]*(\d{1,2}:\d{2})(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*break[\s\n]*:?[\s\n]*(\d+))?(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*reg[^\d]*((?:\d{1,2}:\d{2})|(\d+)(?:\s*(?:hr|hrs))?))?(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*([\s\S]+))?/i;
+    // Date pattern allows single or double digits: 1.12. or 01.12.
+    const structuredPattern = /(\d{1,2}\.\d{1,2}\.)[\s\n]*(?:,|[\s\n]+)[\s\n]*(\d{1,2}:\d{2})[\s\n]*(?:,|[\s\n]+)[\s\n]*(\d{1,2}:\d{2})(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*break[\s\n]*:?[\s\n]*(\d+))?(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*reg[^\d]*((?:\d{1,2}:\d{2})|(\d+)(?:\s*(?:hr|hrs))?))?(?:[\s\n]*(?:,|[\s\n]+)[\s\n]*([\s\S]+))?/i;
     const structuredMatch = message.match(structuredPattern);
     
     if (structuredMatch) {

@@ -1024,6 +1024,7 @@ function extractWorkInfo(message, logCallback = null) {
 function parseTxtChat(content, logCallback = null) {
     const messages = [];
     let statusMessagesSkipped = 0;
+    let deletedMessagesSkipped = 0;
     
     const log = (msg) => {
         if (logCallback) logCallback(msg);
@@ -1132,6 +1133,15 @@ function parseTxtChat(content, logCallback = null) {
         
         matchedIndices.add(header.index);
         const [, dateStr, timeStr, sender, message] = headerMatch;
+        
+        // Filter out deleted messages immediately
+        const deletedMessagePattern = /^\s*(this\s+message\s+was\s+deleted|message\s+deleted|deleted|gelöscht|nachricht\s+gelöscht)\s*$/i;
+        if (deletedMessagePattern.test(message.trim())) {
+            deletedMessagesSkipped++;
+            log(`  ✗ Skipping deleted message at index ${header.index}: ${dateStr}, ${timeStr} - ${sender}`);
+            continue;
+        }
+        
         log(`  Processing message #${i + 1} at index ${header.index}: ${dateStr}, ${timeStr} - ${sender}: "${message.substring(0, 60).replace(/\n/g, '\\n')}..."`);
         
         try {
@@ -1183,6 +1193,16 @@ function parseTxtChat(content, logCallback = null) {
                 }
                 // Start new message
                 const [, dateStr, timeStr, sender, message] = msgMatch;
+                
+                // Filter out deleted messages immediately
+                const deletedMessagePattern = /^\s*(this\s+message\s+was\s+deleted|message\s+deleted|deleted|gelöscht|nachricht\s+gelöscht)\s*$/i;
+                if (deletedMessagePattern.test(message.trim())) {
+                    deletedMessagesSkipped++;
+                    log(`Skipping deleted message in line-by-line parsing: ${dateStr}, ${timeStr} - ${sender}`);
+                    currentMessage = null;
+                    continue;
+                }
+                
                 try {
                     const [day, month, yearStr] = dateStr.split('.');
                     const year = yearStr.length === 2 ? '20' + yearStr : yearStr;
@@ -1229,8 +1249,9 @@ function parseTxtChat(content, logCallback = null) {
     log(`\n=== Parsing Summary ===`);
     log(`Total headers found: ${allHeaders.length} (all lines starting with date pattern)`);
     log(`  → Status messages (no colon): ${statusMessagesSkipped}`);
+    log(`  → Deleted messages: ${deletedMessagesSkipped}`);
     log(`  → Non-status messages (with colon): ${nonStatusMessages}`);
-    log(`  → Check: ${statusMessagesSkipped} + ${nonStatusMessages} = ${statusMessagesSkipped + nonStatusMessages} (should match ${allHeaders.length})`);
+    log(`  → Check: ${statusMessagesSkipped} + ${deletedMessagesSkipped} + ${nonStatusMessages} = ${statusMessagesSkipped + deletedMessagesSkipped + nonStatusMessages} (should match ${allHeaders.length})`);
     
     return messages;
 }

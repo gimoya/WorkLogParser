@@ -989,8 +989,8 @@ function extractWorkInfo(message, logCallback = null) {
         if (!entry.workDate) {
             entry.workDate = formatDateToDDMMYYYY(dateInfo.date); // Normalize date format
             // Store original date match for highlighting
-            // Find the full match text at the date index
-            const dateMatchAtPos = message.substring(dateInfo.index).match(/^\d{2}\.\d{2}(?:\.\d{2,4})?\.?/);
+            // Find the full match text at the date index (allow single or double digits)
+            const dateMatchAtPos = message.substring(dateInfo.index).match(/^\d{1,2}\.\d{1,2}(?:\.\d{2,4})?\.?/);
             if (dateMatchAtPos) {
                 entry.dateOriginalText = dateMatchAtPos[0];
                 entry.dateMatchIndex = dateInfo.index;
@@ -1050,14 +1050,17 @@ function parseTxtChat(content, logCallback = null) {
         });
     }
     
-    log(`Found ${allHeaders.length} potential message headers (all lines starting with date pattern)`);
-    log(`  This includes both status messages (no colon) and regular messages (with colon)`);
+    log(`Found ${allHeaders.length} potential message headers`);
     
-    // First, explicitly filter out status messages (no colon after dash)
+    // First, explicitly filter out status messages (no colon after dash) and deleted messages
     // Status messages: "dd.mm.yy, hh:mm - Text" (NO colon after dash)
     // Regular messages: "dd.mm.yy, hh:mm - Name: Text" (HAS colon after sender name)
+    // Deleted messages: "dd.mm.yy, hh:mm - Name: Diese Nachricht wurde gelöscht." (has colon but message is deleted)
     const regularMessageHeaders = [];
     const statusMessageIndices = new Set(); // Track status message indices to stop extraction at them
+    // Match exact German deleted message texts: "Du hast diese Nachricht gelöscht." or "Diese Nachricht wurde gelöscht."
+    const deletedMessagePattern = /^\s*(du\s+hast\s+diese\s+nachricht\s+gelöscht\.|diese\s+nachricht\s+wurde\s+gelöscht\.)\s*$/i;
+    
     for (let i = 0; i < allHeaders.length; i++) {
         const header = allHeaders[i];
         const nextHeaderIndex = i < allHeaders.length - 1 ? allHeaders[i + 1].index : content.length;
@@ -1074,29 +1077,28 @@ function parseTxtChat(content, logCallback = null) {
             // Check if there's a colon in the first line after the dash
             // If yes, it's a regular message. If no, it's a status message.
             if (firstLine.includes(':')) {
+                // Check if it's a deleted message (has colon but message content is "deleted")
+                // Extract sender and message part: "Name: Message"
+                const colonIndex = firstLine.indexOf(':');
+                if (colonIndex > 0) {
+                    const messageContent = firstLine.substring(colonIndex + 1).trim();
+                    if (deletedMessagePattern.test(messageContent)) {
+                        deletedMessagesSkipped++;
+                        statusMessageIndices.add(header.index);
+                        // Deleted message - silently skip (already counted)
+                        continue;
+                    }
+                }
                 regularMessageHeaders.push(header);
             } else {
                 statusMessagesSkipped++;
                 statusMessageIndices.add(header.index);
-                log(`Skipping status message (no colon after dash): ${header.dateStr}, ${header.timeStr} - "${firstLine.substring(0, 50)}..."`);
+                // Status message - silently skip (already counted)
             }
         }
     }
     
-    log(`Filtered: ${regularMessageHeaders.length} regular messages, ${statusMessagesSkipped} status messages skipped`);
-    
-    // Log the regular message headers we found
-    if (regularMessageHeaders.length > 0) {
-        log(`Regular message headers found:`);
-        regularMessageHeaders.forEach((h, idx) => {
-            const preview = content.substring(h.index, Math.min(h.index + 80, content.length));
-            log(`  ${idx + 1}. ${h.dateStr}, ${h.timeStr} at index ${h.index}: "${preview.replace(/\n/g, '\\n')}..."`);
-        });
-    }
-    
-    // Iterate through regular message headers and extract messages directly
-    // Stop at next regular message OR next status message (whichever comes first)
-    log(`Processing ${regularMessageHeaders.length} regular messages...`);
+    log(`Filtered: ${regularMessageHeaders.length} valid messages (${statusMessagesSkipped} status, ${deletedMessagesSkipped} deleted skipped)`);
     const matchedIndices = new Set(); // Track which headers were processed
     const headerPattern = /^(\d{2}\.\d{2}\.\d{2,4}),\s*(\d{2}:\d{2})\s*-\s*([^:\n]+):\s*(.*)/s;
     
@@ -1134,15 +1136,9 @@ function parseTxtChat(content, logCallback = null) {
         matchedIndices.add(header.index);
         const [, dateStr, timeStr, sender, message] = headerMatch;
         
-        // Filter out deleted messages immediately
-        const deletedMessagePattern = /^\s*(this\s+message\s+was\s+deleted|message\s+deleted|deleted|gelöscht|nachricht\s+gelöscht)\s*$/i;
-        if (deletedMessagePattern.test(message.trim())) {
-            deletedMessagesSkipped++;
-            log(`  ✗ Skipping deleted message at index ${header.index}: ${dateStr}, ${timeStr} - ${sender}`);
-            continue;
-        }
+        // Deleted messages are already filtered out in the early stage above
         
-        log(`  Processing message #${i + 1} at index ${header.index}: ${dateStr}, ${timeStr} - ${sender}: "${message.substring(0, 60).replace(/\n/g, '\\n')}..."`);
+        // Process message silently (only log errors)
         
         try {
             const messageEntry = processMessage(message, dateStr, timeStr, sender, log);
@@ -1155,12 +1151,9 @@ function parseTxtChat(content, logCallback = null) {
         }
     }
     
-    log(`Processed ${messages.length} messages from ${regularMessageHeaders.length} headers`);
-    
-    // Check if any headers failed to parse (shouldn't happen, but log for debugging)
     if (matchedIndices.size < regularMessageHeaders.length) {
         const unmatchedCount = regularMessageHeaders.length - matchedIndices.size;
-        log(`  ⚠ WARNING: ${unmatchedCount} headers could not be parsed (header pattern failed to match)`);
+        log(`⚠ ${unmatchedCount} headers could not be parsed`);
     }
     
     // If primary pattern didn't work, try line-by-line parsing
@@ -1183,7 +1176,7 @@ function parseTxtChat(content, logCallback = null) {
                 const lineAfterDash = line.substring(line.indexOf(' - ') + 3);
                 if (!lineAfterDash.includes(':')) {
                     // This is a status message, skip it
-                    log(`Skipping status message in line-by-line parsing: ${line.substring(0, 50)}...`);
+                    // Status message - skip silently
                     continue;
                 }
                 
@@ -1194,11 +1187,11 @@ function parseTxtChat(content, logCallback = null) {
                 // Start new message
                 const [, dateStr, timeStr, sender, message] = msgMatch;
                 
-                // Filter out deleted messages immediately
-                const deletedMessagePattern = /^\s*(this\s+message\s+was\s+deleted|message\s+deleted|deleted|gelöscht|nachricht\s+gelöscht)\s*$/i;
+                // Filter out deleted messages immediately - match exact German deleted message texts
+                const deletedMessagePattern = /^\s*(du\s+hast\s+diese\s+nachricht\s+gelöscht\.|diese\s+nachricht\s+wurde\s+gelöscht\.)\s*$/i;
                 if (deletedMessagePattern.test(message.trim())) {
                     deletedMessagesSkipped++;
-                    log(`Skipping deleted message in line-by-line parsing: ${dateStr}, ${timeStr} - ${sender}`);
+                    // Deleted message - skip silently
                     currentMessage = null;
                     continue;
                 }
@@ -1247,11 +1240,7 @@ function parseTxtChat(content, logCallback = null) {
     const nonStatusMessages = messages.length;
     
     log(`\n=== Parsing Summary ===`);
-    log(`Total headers found: ${allHeaders.length} (all lines starting with date pattern)`);
-    log(`  → Status messages (no colon): ${statusMessagesSkipped}`);
-    log(`  → Deleted messages: ${deletedMessagesSkipped}`);
-    log(`  → Non-status messages (with colon): ${nonStatusMessages}`);
-    log(`  → Check: ${statusMessagesSkipped} + ${deletedMessagesSkipped} + ${nonStatusMessages} = ${statusMessagesSkipped + deletedMessagesSkipped + nonStatusMessages} (should match ${allHeaders.length})`);
+    log(`Total: ${allHeaders.length} headers → ${nonStatusMessages} valid messages (${statusMessagesSkipped} status, ${deletedMessagesSkipped} deleted filtered out)`);
     
     return messages;
 }
@@ -1635,43 +1624,13 @@ function updateStatsFromDOM() {
     const table = document.getElementById('messagesTable');
     if (!table) return;
     
-    const rows = table.querySelectorAll('tbody tr');
-    const messages = Array.from(rows).map(row => {
-        const getCellValue = (field) => {
-            const cell = row.querySelector(`[data-field="${field}"]`);
-            if (!cell) return '';
-            const text = (cell.textContent || cell.innerText || '').trim();
-            return text.replace(/N\/A/gi, '').replace(/<[^>]*>/g, '');
-        };
-        
-        const messageCell = row.querySelector('.col-message');
-        const messageText = messageCell ? (messageCell.textContent || messageCell.innerText || '').trim() : '';
-        
-        // Recalculate netto time from current values to ensure accuracy
-        const startTime = getCellValue('startTime');
-        const endTime = getCellValue('endTime');
-        const breakTime = getCellValue('breakTime');
-        const regieTime = getCellValue('regieTime');
-        // Netto = (end - start) - break (no regie subtraction)
-        const nettoTime = calculateNettoTime(startTime, endTime, breakTime, '') || getCellValue('nettoTime');
-        
-        return {
-            sender: getCellValue('sender'),
-            workDate: getCellValue('date'),
-            date: getCellValue('msgDate'),
-            startTime: startTime,
-            endTime: endTime,
-            breakTime: breakTime,
-            nettoTime: nettoTime,
-            regieTime: regieTime,
-            message: messageText
-        };
-    });
-    
-    // Sync edits back to allParsedMessages
+    // Sync edits back to allParsedMessages first
     syncEditsToAllParsedMessages();
     
-    generateSummaryTables(messages);
+    // Use currentFilteredMessages if filters are active, otherwise use allParsedMessages
+    // This ensures table and summary are always in sync
+    const messagesForSummary = currentFilteredMessages !== null ? currentFilteredMessages : allParsedMessages;
+    generateSummaryTables(messagesForSummary);
 }
 
 // Export to CSV function - reads from DOM to include edited values
@@ -1748,6 +1707,7 @@ function exportToCSV() {
 
 // Global variable to store all parsed messages
 let allParsedMessages = [];
+let currentFilteredMessages = null; // Track currently filtered messages for summary sync
 
 // Convert dd.mm.yyyy to YYYY-MM-DD for date comparison
 function parseDateToComparable(dateStr) {
@@ -1830,13 +1790,20 @@ function applyFilters() {
     if (!elements.fromDateInput || !elements.toDateInput || allParsedMessages.length === 0) return;
     
     // First, sync any edits from DOM back to allParsedMessages before filtering
-    updateStatsFromDOM();
+    syncEditsToAllParsedMessages();
     
     const fromDate = elements.fromDateInput.value || null;
     const toDate = elements.toDateInput.value || null;
     const worker = elements.workerFilter ? elements.workerFilter.value || null : null;
     
-    const filteredMessages = filterMessages(allParsedMessages, fromDate, toDate, worker);
+    // Check if any filters are active
+    const hasFilters = fromDate || toDate || (worker && worker !== '');
+    
+    // Filter messages if filters are active, otherwise use all messages
+    const filteredMessages = hasFilters ? filterMessages(allParsedMessages, fromDate, toDate, worker) : allParsedMessages;
+    
+    // Store current filtered messages for summary sync
+    currentFilteredMessages = hasFilters ? filteredMessages : null;
     
     // Re-display filtered messages
     displayFilteredMessages(filteredMessages);
@@ -2050,8 +2017,8 @@ function displayFilteredMessages(messages) {
         });
     });
     
-    // Generate summary tables with filtered messages
-    generateSummaryTables(messages);
+    // Generate summary tables - will use currentFilteredMessages if filters are active
+    updateStatsFromDOM();
     
     // Log number of rows added to table
     const rowCount = messages.length;
@@ -2142,6 +2109,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else if (data.success) {
                     // Store all parsed messages globally
                     allParsedMessages = data.messages || [];
+                    currentFilteredMessages = null; // Reset filters when new data is loaded
                     
                     // Find earliest date and set default filter values
                     const earliestDate = findEarliestDate(allParsedMessages);

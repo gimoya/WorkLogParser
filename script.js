@@ -169,6 +169,34 @@ function parseTimeToMinutes(timeStr) {
     return hours * 60 + minutes;
 }
 
+function minutesToDecimalHours(minutes, decimals = 2) {
+    if (minutes === null || minutes === undefined) return '';
+    const m = Number(minutes);
+    if (!Number.isFinite(m) || m <= 0) return '';
+
+    const hours = m / 60;
+    const fixed = hours.toFixed(decimals);
+
+    // Trim trailing zeros: 1.50 -> 1.5, 2.00 -> 2
+    return fixed
+        .replace(/(\.\d*?[1-9])0+$/, '$1') // drop only zeros after last non-zero digit
+        .replace(/\.0+$/, '');            // drop .00
+}
+
+function decimalHoursToMinutes(value) {
+    if (value === null || value === undefined) return null;
+    const raw = String(value).trim();
+    if (raw === '') return null;
+
+    const normalized = raw.replace(',', '.');
+    if (!/^\d+(\.\d+)?$/.test(normalized)) return null;
+
+    const dec = Number(normalized);
+    if (!Number.isFinite(dec) || dec < 0) return null;
+
+    return Math.round(dec * 60);
+}
+
 function calculateNettoTime(startTime, endTime, breakTime) {
     try {
         const startMinutes = parseTimeToMinutes(startTime);
@@ -1155,18 +1183,21 @@ function syncEditsToAllParsedMessages() {
             const workDate = getCellValue('date');
             const startTime = getCellValue('startTime');
             const endTime = getCellValue('endTime');
-            const breakTime = getCellValue('breakTime');
+            const breakTimeDisplay = getCellValue('breakTime');
             const regie = getCellValue('regie');
+
+            const breakMinutes = decimalHoursToMinutes(breakTimeDisplay);
+            const breakTimeHHMM = breakMinutes && breakMinutes > 0 ? minutesToHHMM(breakMinutes) : '';
             
             // Always update these fields (even if empty, to allow clearing)
             originalMsg.workDate = workDate || originalMsg.workDate || '';
             originalMsg.startTime = startTime || '';
             originalMsg.endTime = endTime || '';
-            originalMsg.breakTime = breakTime || '';
+            originalMsg.breakTime = breakTimeHHMM || '';
             originalMsg.regie = regie || '';
             
             // Recalculate netto
-            const nettoTime = calculateNettoTime(startTime, endTime, breakTime);
+            const nettoTime = calculateNettoTime(startTime, endTime, breakTimeHHMM);
             originalMsg.nettoTime = nettoTime || '';
         }
     });
@@ -1200,17 +1231,17 @@ function exportToCSV() {
         return;
     }
     
-    // CSV header
+    // CSV header (match displayed column order)
     const headers = [
         'Msg Date',
+        'Msg Text',
         'Date',
+        'Worker',
         'Start',
         'End',
         'Break',
         'Netto',
-        'Regie',
-        'Worker',
-        'Log-Text'
+        'Regie'
     ];
     
     // Extract data from DOM (read edited values)
@@ -1229,14 +1260,14 @@ function exportToCSV() {
         
         return [
             getCellValue('msgDate'),
+            messageText,
             getCellValue('date'),
+            getCellValue('sender'),
             getCellValue('startTime'),
             getCellValue('endTime'),
             getCellValue('breakTime'),
             getCellValue('nettoTime'),
-            getCellValue('regie'),
-            getCellValue('sender'),
-            messageText
+            getCellValue('regie')
         ].map(field => `"${(field || '').replace(/"/g, '""')}"`).join(';');
     });
     
@@ -1393,7 +1424,39 @@ function displayFilteredMessages(messages) {
     // Track seen work date + person combinations to identify duplicates
     const seenDatePersonCombos = new Set();
     
-    const tableRows = messages.map((msg, index) => {
+    const sortedMessages = messages.slice().sort((a, b) => {
+        const workerA = (a.sender || 'Unknown').toLowerCase();
+        const workerB = (b.sender || 'Unknown').toLowerCase();
+        if (workerA < workerB) return -1;
+        if (workerA > workerB) return 1;
+
+        const workA = a.workDate && a.workDate !== 'N/A' ? formatDateToDDMMYYYY(a.workDate) : '';
+        const workB = b.workDate && b.workDate !== 'N/A' ? formatDateToDDMMYYYY(b.workDate) : '';
+        const compA = workA ? parseDateToComparable(workA) : null;
+        const compB = workB ? parseDateToComparable(workB) : null;
+
+        if (compA === null && compB === null) return 0;
+        if (compA === null) return 1;
+        if (compB === null) return -1;
+
+        if (compA < compB) return -1;
+        if (compA > compB) return 1;
+
+        // Tie-breaker: start time then end time (keeps ordering deterministic)
+        const startA = a.startTime ? parseTimeToMinutes(a.startTime) : 0;
+        const startB = b.startTime ? parseTimeToMinutes(b.startTime) : 0;
+        if (startA < startB) return -1;
+        if (startA > startB) return 1;
+
+        const endA = a.endTime ? parseTimeToMinutes(a.endTime) : 0;
+        const endB = b.endTime ? parseTimeToMinutes(b.endTime) : 0;
+        if (endA < endB) return -1;
+        if (endA > endB) return 1;
+
+        return (a.message || '').localeCompare(b.message || '');
+    });
+    
+    const tableRows = sortedMessages.map((msg, index) => {
         // Only highlight if we have actual extracted values
         const hasExtractedData = msg.workDate || msg.startTime || msg.endTime || msg.breakTime || msg.regie;
         const highlightedMessage = hasExtractedData ? highlightMessage(msg.message, msg) : msg.message;
@@ -1418,6 +1481,9 @@ function displayFilteredMessages(messages) {
             if (value === 'N/A') return '<span style="color: #999; font-style: italic;">N/A</span>';
             return value || '';
         };
+
+        const breakDecimalHours = msg.breakTime ? minutesToDecimalHours(parseTimeToMinutes(msg.breakTime)) : '';
+        const nettoDecimalHours = msg.nettoTime ? minutesToDecimalHours(parseTimeToMinutes(msg.nettoTime)) : '';
         
         // Create unique key for matching: date_time_sender_message
         const uniqueKey = `${msg.date}_${msg.time}_${msg.sender}_${msg.message}`;
@@ -1425,18 +1491,20 @@ function displayFilteredMessages(messages) {
         // Check for duplicate date - mark red
         const dateCellStyle = isDuplicateDate ? ' style="color: #cc0000; font-weight: 600;"' : '';
         const dateCellContent = isDuplicateDate ? `<span style="color: #cc0000;">${dateValue}</span>` : dateValue;
+        const msgDateCellStyle = dateCellStyle;
+        const msgDateCellContent = isDuplicateDate ? `<span style="color: #cc0000;">${msgDateValue}</span>` : msgDateValue;
         
         return `
         <tr${isUnmatched ? ' style="background-color: #fff3cd;"' : ''} data-row-index="${index}" data-msg-key="${uniqueKey.replace(/"/g, '&quot;')}">
-            <td class="col-msg-date" data-field="msgDate">${msgDateValue}</td>
+            <td class="col-msg-date" data-field="msgDate"${msgDateCellStyle}>${msgDateCellContent}</td>
+            <td class="col-message">${highlightedMessage.replace(/\n/g, '<br>')}</td>
             <td class="col-date" data-field="date"${dateCellStyle}>${dateCellContent}</td>
             <td class="col-name" data-field="sender">${msg.sender || 'Unknown'}</td>
             <td class="col-start-time editable-number" contenteditable="true" data-field="startTime">${isDuplicateDate ? '' : formatCellValue(msg.startTime)}</td>
             <td class="col-end-time editable-number" contenteditable="true" data-field="endTime">${isDuplicateDate ? '' : formatCellValue(msg.endTime)}</td>
-            <td class="col-break editable-number" contenteditable="true" data-field="breakTime">${isDuplicateDate ? '' : formatCellValue(msg.breakTime)}</td>
-            <td class="col-netto" data-field="nettoTime">${isDuplicateDate ? '' : formatCellValue(msg.nettoTime)}</td>
+            <td class="col-break editable-number" contenteditable="true" data-field="breakTime">${isDuplicateDate ? '' : formatCellValue(breakDecimalHours)}</td>
+            <td class="col-netto" data-field="nettoTime">${isDuplicateDate ? '' : formatCellValue(nettoDecimalHours)}</td>
             <td class="col-regie" data-field="regie">${isDuplicateDate ? '' : formatCellValue(msg.regie)}</td>
-            <td class="col-message">${highlightedMessage.replace(/\n/g, '<br>')}</td>
         </tr>
     `;
     }).join('');
@@ -1457,10 +1525,18 @@ function displayFilteredMessages(messages) {
             let isValid = true;
             let errorMessage = '';
             
-            if (['startTime', 'endTime', 'breakTime'].includes(field)) {
+            if (['startTime', 'endTime'].includes(field)) {
                 if (updatedValue && !validateTimeFormat(updatedValue)) {
                     isValid = false;
                     errorMessage = 'Invalid time format. Please use HH:MM (e.g., 08:30)';
+                }
+            }
+
+            if (field === 'breakTime' && updatedValue) {
+                const breakMinutes = decimalHoursToMinutes(updatedValue);
+                if (breakMinutes === null) {
+                    isValid = false;
+                    errorMessage = 'Invalid break duration format. Please use decimal hours (e.g., 0.5, 1.25)';
                 }
             }
             
@@ -1485,31 +1561,31 @@ function displayFilteredMessages(messages) {
                     const endTime = field === 'endTime' ? updatedValue : (endCell?.textContent || '').trim().replace(/N\/A/gi, '').replace(/<[^>]*>/g, '');
                     const breakTime = field === 'breakTime' ? updatedValue : (breakCell?.textContent || '').trim().replace(/N\/A/gi, '').replace(/<[^>]*>/g, '');
                     
-                    // Validate: break < (end time - start time) duration
+                    // Validate and recalculate netto (duration-based, breakTime is decimal hours)
                     if (startTime && endTime) {
                         const startMinutes = parseTimeToMinutes(startTime);
                         const endMinutes = parseTimeToMinutes(endTime);
-                        const breakMinutes = parseTimeToMinutes(breakTime) || 0;
-                        
+                        const breakMinutes = decimalHoursToMinutes(breakTime) || 0;
+
                         if (startMinutes && endMinutes) {
                             let totalMinutes = endMinutes - startMinutes;
                             if (totalMinutes < 0) {
                                 totalMinutes += 24 * 60; // Overnight shift
                             }
-                            
+
                             // Break time must be less than the total duration (end - start)
                             if (breakMinutes >= totalMinutes) {
                                 const totalDuration = minutesToHHMM(totalMinutes);
-                                alert(`Invalid break time: Break time (${breakTime || '00:00'}) must be less than the work duration (${totalDuration}).\nStart: ${startTime}, End: ${endTime}, Duration: ${totalDuration}`);
+                                alert(`Invalid break duration: Break (${breakTime || '0'}) must be less than the work duration (${totalDuration}).\nStart: ${startTime}, End: ${endTime}, Duration: ${totalDuration}`);
                                 this.textContent = '';
                                 this.focus();
                                 return;
                             }
+
+                            const nettoMinutes = totalMinutes - breakMinutes;
+                            nettoCell.textContent = nettoMinutes > 0 ? minutesToDecimalHours(nettoMinutes) : '';
                         }
                     }
-                    
-                    const netto = calculateNettoTime(startTime, endTime, breakTime);
-                    nettoCell.textContent = netto || '';
                     
                     // Update row formatting based on whether both start and end times are present
                     const isUnmatched = !startTime || !endTime;

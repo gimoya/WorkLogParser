@@ -177,10 +177,11 @@ function minutesToDecimalHours(minutes, decimals = 2) {
     const hours = m / 60;
     const fixed = hours.toFixed(decimals);
 
-    // Trim trailing zeros: 1.50 -> 1.5, 2.00 -> 2
-    return fixed
-        .replace(/(\.\d*?[1-9])0+$/, '$1') // drop only zeros after last non-zero digit
-        .replace(/\.0+$/, '');            // drop .00
+    // Trim trailing zeros (dot-based), then comma as decimal separator (DE-style)
+    const withDot = fixed
+        .replace(/(\.\d*?[1-9])0+$/, '$1')
+        .replace(/\.0+$/, '');
+    return withDot.includes('.') ? withDot.replace('.', ',') : withDot;
 }
 
 function decimalHoursToMinutes(value) {
@@ -1217,7 +1218,7 @@ function updateStatsFromDOM() {
     generateSummaryTables(messagesForSummary);
 }
 
-// Export to CSV function - reads from DOM to include edited values
+// Export to CSV: field separator `;`, decimal comma in duration columns (from DOM)
 function exportToCSV() {
     const table = document.getElementById('messagesTable');
     if (!table) {
